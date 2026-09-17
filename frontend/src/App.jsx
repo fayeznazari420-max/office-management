@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API = "http://localhost:5000";
+const API = import.meta.env.DEV ? "http://localhost:5000" : "";
 
 /* ================= SETTINGS ================= */
 

@@ -3,6 +3,7 @@ const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("./db");
+const path = require("path");
 require("dotenv").config();
 
 const app = express();
@@ -3322,6 +3323,18 @@ app.get(
         );
     }
 );
+
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
+
+app.use((req, res, next) => {
+    if (req.method === "GET") {
+        return res.sendFile(
+            path.join(__dirname, "../frontend/dist/index.html")
+        );
+    }
+    next();
+});
+
 // ======================================================
 // GLOBAL ERROR HANDLER
 // ======================================================
