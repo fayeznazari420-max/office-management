@@ -5829,6 +5829,7 @@ ensureUserRoleColumn();
 
 const server = app.listen(
     PORT,
+       "0.0.0.0",
     () => {
         console.log(`Office Management API is running on port ${PORT}.`);
         console.log(`Health check: http://localhost:${PORT}/health`);
