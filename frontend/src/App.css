@@ -2396,3 +2396,39 @@ body.compact th {
 
     color: var(--white);
 }
+.password-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.password-input-wrapper .password-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+  z-index: 100;
+}
+
+.password-input-wrapper .password-toggle:hover {
+  opacity: 0.7;
+}
+
+.login-error {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: center;
+  background: #ffe5e5;
+  color: #c62828;
+  border: 1px solid #ffb3b3;
+}
