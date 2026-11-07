@@ -3,6 +3,20 @@ const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("./db");
+const {
+    ROLE,
+    canAssignRole,
+    canManageRecord,
+    canManageUser,
+    createAuthorizationMiddleware,
+    getPermissions,
+    hasForbiddenProfileFields,
+    hasUnexpectedFields,
+    isAccountActive,
+    normalizeRole,
+    isActiveRole,
+    pickProfileFields
+} = require("./rbac");
 const path = require("path");
 const fs = require("fs");
 let XLSX = null;
@@ -21,6 +35,7 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
+const authorizeRequest = createAuthorizationMiddleware();
 
 // ======================================================
 // MIDDLEWARE
@@ -134,6 +149,10 @@ function authenticateToken(
     res,
     next
 ) {
+    if (req.authenticated === true && req.user?.id) {
+        return next();
+    }
+
     const authHeader =
         req.headers["authorization"];
 
@@ -160,21 +179,368 @@ function authenticateToken(
     jwt.verify(
         token,
         JWT_SECRET,
-        (err, user) => {
+        (err, tokenUser) => {
             if (err) {
-                return res.status(403).json({
+                return res.status(401).json({
                     success: false,
                     message:
                         "Invalid or expired token."
                 });
             }
 
-            req.user = user;
+            if (!tokenUser?.id || !isValidId(tokenUser.id)) {
+                return res.status(401).json({
+                    success: false,
+                    message: "Invalid authentication token."
+                });
+            }
 
-            next();
+            db.query(
+                `
+                SELECT id, name, username, email, role, photo, phone, is_active
+                FROM users
+                WHERE id = ?
+                LIMIT 1
+                `,
+                [tokenUser.id],
+                (lookupError, rows) => {
+                    if (lookupError) {
+                        return sendError(res, 500, "Failed to verify account.", lookupError);
+                    }
+
+                    if (!rows.length) {
+                        return res.status(401).json({
+                            success: false,
+                            message: "Account is no longer available."
+                        });
+                    }
+
+                    const account = rows[0];
+                    const role = normalizeRole(account.role);
+
+                    if (!isAccountActive(account.is_active)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: "This account is disabled."
+                        });
+                    }
+
+                    if (!isActiveRole(role)) {
+                        return res.status(403).json({
+                            success: false,
+                            message: "This account role is not active."
+                        });
+                    }
+
+                    req.user = {
+                        id: account.id,
+                        name: account.name,
+                        username: account.username,
+                        email: account.email,
+                        phone: account.phone,
+                        photo: account.photo,
+                        role
+                    };
+                    req.authenticated = true;
+
+                    return authorizeRequest(req, res, next);
+                }
+            );
         }
     );
 }
+
+const RECORD_RESOURCES = [
+    { path: "/customers", table: "customers" },
+    { path: "/employees", table: "employees" },
+    { path: "/attendance", table: "attendance" },
+    { path: "/contracts", table: "contracts" },
+    { path: "/payments", table: "payments" },
+    { path: "/projects", table: "projects" },
+    { path: "/finance/income", table: "finance_income" },
+    { path: "/finance/expenses", table: "finance_expenses" },
+    { path: "/finance/debts", table: "finance_debts" }
+];
+
+function authorizeRecordRequest(req, res, next) {
+    const resource = RECORD_RESOURCES.find(({ path: prefix }) =>
+        req.path === prefix || req.path.startsWith(`${prefix}/`)
+    );
+
+    if (!resource) {
+        return next();
+    }
+
+    return authenticateToken(req, res, () => {
+        const resourcePath = req.path.replace(/\/+$/, "");
+        const isCollection = resourcePath === resource.path;
+        const isRead = req.method === "GET";
+        const isCreate = req.method === "POST" && isCollection;
+        const isUpdate =
+            req.method === "PUT" ||
+            req.method === "DELETE" ||
+            (req.method === "POST" && !isCollection);
+
+        if (isRead) {
+            const sendJson = res.json.bind(res);
+            res.json = (body) => {
+                const records = Array.isArray(body)
+                    ? body
+                    : body && typeof body === "object"
+                        ? [body]
+                        : [];
+                const creatorIds = [
+                    ...new Set(
+                        records
+                            .filter(
+                                (record) =>
+                                    record?.created_by != null &&
+                                    record.created_by_role == null
+                            )
+                            .map((record) => record.created_by)
+                    )
+                ];
+
+                const setRecordPermissions = (rolesById) => {
+                    records.forEach((record) => {
+                        if (record && Object.hasOwn(record, "created_by")) {
+                            record.can_edit = canManageRecord(
+                                req.user.role,
+                                req.user.id,
+                                record.created_by,
+                                record.created_by_role ||
+                                    rolesById.get(String(record.created_by)) ||
+                                    null
+                            );
+                            delete record.created_by_role;
+                        }
+                    });
+                };
+
+                if (!creatorIds.length) {
+                    setRecordPermissions(new Map());
+                    return sendJson(body);
+                }
+
+                db.query(
+                    "SELECT id, role FROM users WHERE id IN (?)",
+                    [creatorIds],
+                    (error, users) => {
+                        if (error) {
+                            console.error("Failed to load record creator roles:", error.message);
+                            return res.status(500).json({
+                                success: false,
+                                message: "Failed to load record permissions."
+                            });
+                        }
+
+                        const rolesById = new Map(
+                            users.map((user) => [String(user.id), user.role])
+                        );
+
+                        setRecordPermissions(rolesById);
+
+                        return sendJson(body);
+                    }
+                );
+
+                return res;
+            };
+
+            return next();
+        }
+
+        if (isCreate) {
+            return next();
+        }
+
+        if (!isUpdate) {
+            return res.status(403).json({
+                success: false,
+                message: "This operation is not permitted."
+            });
+        }
+
+        const idMatch = resourcePath.match(
+            new RegExp(`^${resource.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(\\d+)(?:/pay)?$`)
+        );
+
+        if (!idMatch) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid record ID."
+            });
+        }
+
+        db.query(
+            `SELECT created_by, created_by_role FROM \`${resource.table}\` WHERE id = ? LIMIT 1`,
+            [idMatch[1]],
+            (recordError, records) => {
+                if (recordError) {
+                    return sendError(res, 500, "Failed to verify record ownership.", recordError);
+                }
+
+                if (!records.length) {
+                    return next();
+                }
+
+                const creatorId = records[0].created_by;
+                const recordedCreatorRole = records[0].created_by_role;
+                const resolveCreatorRole = (callback) => {
+                    if (recordedCreatorRole) {
+                        return callback(recordedCreatorRole);
+                    }
+
+                    if (creatorId === null || creatorId === undefined) {
+                        return callback(null);
+                    }
+
+                    db.query(
+                        "SELECT role FROM users WHERE id = ? LIMIT 1",
+                        [creatorId],
+                        (creatorError, users) => {
+                            if (creatorError) {
+                                return sendError(
+                                    res,
+                                    500,
+                                    "Failed to verify record creator.",
+                                    creatorError
+                                );
+                            }
+
+                            callback(users.length ? users[0].role : null);
+                        }
+                    );
+                };
+
+                resolveCreatorRole((creatorRole) => {
+                    if (
+                        !canManageRecord(
+                            req.user.role,
+                            req.user.id,
+                            creatorId,
+                            creatorRole
+                        )
+                    ) {
+                        return res.status(403).json({
+                            success: false,
+                            message: "You are not allowed to modify this record."
+                        });
+                    }
+
+                    return next();
+                });
+            }
+        );
+    });
+}
+
+app.use(authorizeRecordRequest);
+
+function requireUserAdministration(req, res, next) {
+    if (!getPermissions(req.user.role).canManageUsers) {
+        return res.status(403).json({
+            success: false,
+            message: "You are not allowed to manage user accounts."
+        });
+    }
+
+    return next();
+}
+
+function authorizeUserTarget(req, res, next) {
+    if (!isValidId(req.params.id)) {
+        return sendError(res, 400, "Invalid user ID.");
+    }
+
+    db.query(
+        "SELECT id, role, is_active FROM users WHERE id = ? LIMIT 1",
+        [req.params.id],
+        (error, rows) => {
+            if (error) {
+                return sendError(res, 500, "Failed to verify user account.", error);
+            }
+
+            if (!rows.length) {
+                return sendError(res, 404, "User not found.");
+            }
+
+            if (
+                !canManageUser(
+                    req.user.role,
+                    rows[0].role,
+                    req.user.id,
+                    rows[0].id
+                )
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not allowed to modify this user account."
+                });
+            }
+
+            req.targetUser = rows[0];
+
+            if (
+                req.method === "PUT" &&
+                req.body?.role !== undefined &&
+                !["super_admin", "admin", "user"].includes(
+                    normalizeRole(req.body.role)
+                )
+            ) {
+                return sendError(res, 400, "Invalid user role.");
+            }
+
+            if (
+                req.method === "PUT" &&
+                req.body?.role !== undefined &&
+                !canAssignRole(req.user.role, req.body.role)
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not allowed to assign this role."
+                });
+            }
+
+            return next();
+        }
+    );
+}
+
+app.use("/users", authenticateToken, (req, res, next) => {
+    if (req.method === "GET" || req.method === "POST") {
+        if (
+            req.method === "POST" &&
+            req.body?.role !== undefined &&
+            !["super_admin", "admin", "user"].includes(
+                normalizeRole(req.body.role)
+            )
+        ) {
+            return sendError(res, 400, "Invalid user role.");
+        }
+
+        if (
+            req.method === "POST" &&
+            req.body?.role !== undefined &&
+            !canAssignRole(req.user.role, req.body.role)
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not allowed to assign this role."
+            });
+        }
+
+        return requireUserAdministration(req, res, next);
+    }
+
+    const userIdMatch = req.path.match(/^\/(\d+)$/);
+    if (["PUT", "DELETE"].includes(req.method) && userIdMatch) {
+        req.params.id = userIdMatch[1];
+        return authorizeUserTarget(req, res, next);
+    }
+
+    return next();
+});
 
 // ======================================================
 // ROOT
@@ -196,6 +562,7 @@ app.get(
                 employees: "/employees",
                 customers: "/customers",
                 attendance: "/attendance",
+                instructions: "/instructions",
                 contracts: "/contracts",
                 payments: "/payments",
                 projects: "/projects",
@@ -275,7 +642,8 @@ const BACKUP_QUERIES = {
             email,
             role,
             photo,
-            created_at
+            created_at,
+            is_active
         FROM users
         ORDER BY id DESC
     `,
@@ -306,6 +674,8 @@ const BACKUP_QUERIES = {
             province,
             address,
             photo,
+            created_by,
+            created_by_role,
             created_at
         FROM employees
         ORDER BY id DESC
@@ -676,6 +1046,16 @@ app.get(
             ).toLowerCase();
 
         if (
+            entity === "users" &&
+            !getPermissions(req.user.role).canManageUsers
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not allowed to export user accounts."
+            });
+        }
+
+        if (
             !BACKUP_QUERIES[entity]
         ) {
             return sendError(
@@ -708,8 +1088,7 @@ app.get(
 
 // ======================================================
 // PUBLIC REGISTRATION
-// New accounts are created as "pending" and must be
-// approved by an existing administrator in the Users page.
+// New accounts remain inactive until a Super Admin assigns a supported role.
 // The client cannot choose an account role.
 // ======================================================
 
@@ -780,7 +1159,7 @@ app.post(
 
                     return res.status(201).json({
                         success: true,
-                        message: "Account created. Wait for administrator approval.",
+                        message: "Account created. Wait for a Super Admin to assign an active role.",
                         id: result.insertId
                     });
                 }
@@ -844,7 +1223,9 @@ app.post(
                 password,
                 email,
                 role,
-                photo
+                photo,
+                phone,
+                is_active
             FROM users
             WHERE username = ?
                OR email = ?
@@ -937,13 +1318,15 @@ app.post(
                         );
                     }
 
-                    if (
-                        String(user.role || "user").toLowerCase() === "pending"
-                    ) {
+                    if (!isAccountActive(user.is_active)) {
+                        return sendError(res, 403, "This account is disabled.");
+                    }
+
+                    if (!isActiveRole(user.role)) {
                         return sendError(
                             res,
                             403,
-                            "Account is pending approval. Please contact an administrator."
+                            "Account is not assigned an active role. Please contact a Super Admin."
                         );
                     }
 
@@ -965,7 +1348,7 @@ app.post(
                                 email:
                                     user.email,
                                 role:
-                                    user.role || "user"
+                                    normalizeRole(user.role)
                             },
                             JWT_SECRET,
                             {
@@ -990,10 +1373,11 @@ app.post(
                             email:
                                 user.email,
                             role:
-                                user.role || "user",
-                            photo:
-                                user.photo ||
-                                ""
+                                normalizeRole(user.role),
+                            photo: user.photo || "",
+                            permissions: getPermissions(
+                                normalizeRole(user.role)
+                            )
                         }
                     });
                 } catch (
@@ -1016,6 +1400,158 @@ app.post(
 // ======================================================
 
 app.get(
+    "/api/me",
+    authenticateToken,
+    (req, res) => {
+        return res.json({
+            id: req.user.id,
+            name: req.user.name,
+            username: req.user.username,
+            email: req.user.email,
+            phone: req.user.phone || "",
+            photo: req.user.photo || "",
+            role: req.user.role,
+            permissions: getPermissions(req.user.role)
+        });
+    }
+);
+
+app.put(
+    "/api/me",
+    authenticateToken,
+    (req, res) => {
+        if (hasForbiddenProfileFields(req.body)) {
+            return res.status(403).json({
+                success: false,
+                message: "Only name, email, and phone can be changed here."
+            });
+        }
+
+        const profile = pickProfileFields(req.body);
+        const name = normalize(profile.name);
+        const email = isEmpty(profile.email)
+            ? null
+            : normalize(profile.email).toLowerCase();
+        const phone = isEmpty(profile.phone)
+            ? null
+            : normalize(profile.phone);
+
+        if (isEmpty(name) || name.length > 255) {
+            return sendError(res, 400, "A valid name is required.");
+        }
+
+        if (
+            email &&
+            (email.length > 255 ||
+                !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        ) {
+            return sendError(res, 400, "Please enter a valid email address.");
+        }
+
+        if (phone && phone.length > 100) {
+            return sendError(res, 400, "Phone number is too long.");
+        }
+
+        db.query(
+            "UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?",
+            [name, email, phone, req.user.id],
+            (error, result) => {
+                if (error) {
+                    if (error.code === "ER_DUP_ENTRY") {
+                        return sendError(res, 409, "Email is already in use.");
+                    }
+
+                    return sendError(res, 500, "Failed to update account.", error);
+                }
+
+                return res.json({
+                    success: true,
+                    message: "Account updated successfully."
+                });
+            }
+        );
+    }
+);
+
+app.post(
+    "/api/me/password",
+    authenticateToken,
+    async (req, res) => {
+        if (hasUnexpectedFields(req.body, ["currentPassword", "newPassword"])) {
+            return res.status(403).json({
+                success: false,
+                message: "Only password fields are allowed here."
+            });
+        }
+
+        const { currentPassword, newPassword } = req.body || {};
+
+        if (
+            typeof currentPassword !== "string" ||
+            typeof newPassword !== "string" ||
+            newPassword.length < 8 ||
+            newPassword.length > 72
+        ) {
+            return sendError(
+                res,
+                400,
+                "Current password and a new password of 8 to 72 characters are required."
+            );
+        }
+
+        db.query(
+            "SELECT password FROM users WHERE id = ? LIMIT 1",
+            [req.user.id],
+            async (error, rows) => {
+                if (error) {
+                    return sendError(res, 500, "Failed to verify password.", error);
+                }
+
+                if (!rows.length) {
+                    return sendError(res, 404, "Account not found.");
+                }
+
+                try {
+                    const storedPassword = rows[0].password;
+                    const matches =
+                        typeof storedPassword === "string" &&
+                        storedPassword.startsWith("$2")
+                            ? await bcrypt.compare(currentPassword, storedPassword)
+                            : currentPassword === storedPassword;
+
+                    if (!matches) {
+                        return sendError(res, 403, "Current password is incorrect.");
+                    }
+
+                    const hash = await bcrypt.hash(newPassword, 10);
+                    db.query(
+                        "UPDATE users SET password = ? WHERE id = ?",
+                        [hash, req.user.id],
+                        (updateError) => {
+                            if (updateError) {
+                                return sendError(
+                                    res,
+                                    500,
+                                    "Failed to change password.",
+                                    updateError
+                                );
+                            }
+
+                            return res.json({
+                                success: true,
+                                message: "Password changed successfully."
+                            });
+                        }
+                    );
+                } catch (hashError) {
+                    return sendError(res, 500, "Failed to change password.", hashError);
+                }
+            }
+        );
+    }
+);
+
+app.get(
     "/users",
     authenticateToken,
     (req, res) => {
@@ -1028,7 +1564,8 @@ app.get(
                 email,
                 role,
                 photo,
-                created_at
+                created_at,
+                is_active
             FROM users
             ORDER BY id DESC
             `,
@@ -1076,7 +1613,8 @@ app.get(
                 username,
                 email,
                 photo,
-                created_at
+                created_at,
+                is_active
             FROM users
             WHERE id = ?
             `,
@@ -1125,7 +1663,8 @@ app.post(
             password,
             email,
             role,
-            photo
+            photo,
+            is_active = 1
         } = req.body;
 
         if (
@@ -1138,6 +1677,10 @@ app.post(
                 400,
                 "Name, username and password are required."
             );
+        }
+
+        if (![0, 1, false, true, "0", "1"].includes(is_active)) {
+            return sendError(res, 400, "Account status must be active or disabled.");
         }
 
         try {
@@ -1156,9 +1699,10 @@ app.post(
                     password,
                     email,
                     role,
-                    photo
+                    photo,
+                    is_active
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 `,
                 [
                     normalize(name),
@@ -1166,7 +1710,8 @@ app.post(
                     hashedPassword,
                     normalize(email),
                     normalize(role || "user"),
-                    normalize(photo)
+                    normalize(photo),
+                    Number(is_active)
                 ],
                 (
                     err,
@@ -1233,7 +1778,8 @@ app.put(
             password,
             email,
             role,
-            photo
+            photo,
+            is_active
         } = req.body;
 
         if (
@@ -1255,6 +1801,13 @@ app.put(
                 400,
                 "Name and username are required."
             );
+        }
+
+        if (
+            is_active !== undefined &&
+            ![0, 1, false, true, "0", "1"].includes(is_active)
+        ) {
+            return sendError(res, 400, "Account status must be active or disabled.");
         }
 
         try {
@@ -1283,7 +1836,8 @@ app.put(
                         password = ?,
                         email = ?,
                         role = ?,
-                        photo = ?
+                        photo = ?,
+                        is_active = ?
                     WHERE id = ?
                     `,
                     [
@@ -1291,8 +1845,9 @@ app.put(
                         normalize(username),
                         hashedPassword,
                         normalize(email),
-                        normalize(role || "user"),
+                        normalize(role ?? req.targetUser.role),
                         normalize(photo),
+                        Number(is_active ?? req.targetUser.is_active),
                         id
                     ],
                     (
@@ -1347,15 +1902,17 @@ app.put(
                         username = ?,
                         email = ?,
                         role = ?,
-                        photo = ?
+                        photo = ?,
+                        is_active = ?
                     WHERE id = ?
                     `,
                     [
                         normalize(name),
                         normalize(username),
                         normalize(email),
-                        normalize(role || "user"),
+                        normalize(role ?? req.targetUser.role),
                         normalize(photo),
+                        Number(is_active ?? req.targetUser.is_active),
                         id
                     ],
                     (
@@ -1487,21 +2044,27 @@ app.get(
         req,
         res
     ) => {
+        const sql = req.user.role === ROLE.ADMIN
+            ? "SELECT id, name FROM employees ORDER BY id DESC"
+            : `
+                SELECT
+                    id,
+                    name,
+                    phone,
+                    email,
+                    position,
+                    province,
+                    address,
+                    photo,
+                    created_by,
+                    created_by_role,
+                    created_at
+                FROM employees
+                ORDER BY id DESC
+            `;
+
         db.query(
-            `
-            SELECT
-                id,
-                name,
-                phone,
-                email,
-                position,
-                province,
-                address,
-                photo,
-                created_at
-            FROM employees
-            ORDER BY id DESC
-            `,
+            sql,
             (
                 err,
                 results
@@ -1627,9 +2190,11 @@ app.post(
                 position,
                 province,
                 address,
-                photo
+                photo,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(name),
@@ -1638,7 +2203,9 @@ app.post(
                 normalize(position),
                 normalize(province),
                 normalize(address),
-                normalize(photo)
+                normalize(photo),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -1952,9 +2519,11 @@ app.post(
                 address,
                 contract_id,
                 date_id,
-                photo
+                photo,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(name),
@@ -1964,7 +2533,9 @@ app.post(
                 normalize(address),
                 normalize(contract_id),
                 normalize(date_id),
-                normalize(photo)
+                normalize(photo),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -2171,6 +2742,8 @@ app.get(
                 a.check_in,
                 a.check_out,
                 a.status,
+                a.created_by,
+                a.created_by_role,
                 a.created_at
             FROM attendance a
             LEFT JOIN employees e
@@ -2234,6 +2807,8 @@ app.get(
                 a.check_in,
                 a.check_out,
                 a.status,
+                a.created_by,
+                a.created_by_role,
                 a.created_at
             FROM attendance a
             LEFT JOIN employees e
@@ -2337,15 +2912,19 @@ app.post(
                         date,
                         check_in,
                         check_out,
-                        status
+                        status,
+                        created_by,
+                        created_by_role
                     )
-                    VALUES (?, NULL, ?, ?, ?, ?)`,
+                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
                     [
                         Number(employee_id),
                         date,
                         normalize(check_in),
                         normalize(check_out),
-                        normalize(status)
+                        normalize(status),
+                        req.user.id,
+                        req.user.role
                     ],
                     (err, result) => {
                         if (err) {
@@ -2539,6 +3118,130 @@ app.delete(
 );
 
 // ======================================================
+// INSTRUCTIONS / ORDERS
+// ======================================================
+
+app.get(
+    "/instructions",
+    authenticateToken,
+    (req, res) => {
+        db.query(
+            `
+            SELECT id, title, description, created_at
+            FROM instructions
+            ORDER BY id DESC
+            `,
+            (error, rows) => {
+                if (error) {
+                    return sendError(res, 500, "Failed to fetch instructions.", error);
+                }
+
+                return res.json(rows);
+            }
+        );
+    }
+);
+
+app.post(
+    "/instructions",
+    authenticateToken,
+    (req, res) => {
+        if (hasUnexpectedFields(req.body, ["title", "description"])) {
+            return sendError(res, 400, "Only title and description are accepted.");
+        }
+
+        const title = normalize(req.body.title);
+        const description = isEmpty(req.body.description)
+            ? null
+            : normalize(req.body.description);
+
+        if (isEmpty(title) || title.length > 255) {
+            return sendError(res, 400, "A title of 1 to 255 characters is required.");
+        }
+
+        db.query(
+            `
+            INSERT INTO instructions
+                (title, description, created_by, created_by_role)
+            VALUES (?, ?, ?, ?)
+            `,
+            [title, description, req.user.id, req.user.role],
+            (error, result) => {
+                if (error) {
+                    return sendError(res, 500, "Failed to issue instruction.", error);
+                }
+
+                return res.status(201).json({
+                    success: true,
+                    message: "Instruction issued successfully.",
+                    id: result.insertId
+                });
+            }
+        );
+    }
+);
+
+app.put(
+    "/instructions/:id",
+    authenticateToken,
+    (req, res) => {
+        if (hasUnexpectedFields(req.body, ["title", "description"])) {
+            return sendError(res, 400, "Only title and description are accepted.");
+        }
+
+        const title = normalize(req.body.title);
+        const description = isEmpty(req.body.description)
+            ? null
+            : normalize(req.body.description);
+
+        if (!isValidId(req.params.id)) {
+            return sendError(res, 400, "Invalid instruction ID.");
+        }
+        if (isEmpty(title) || title.length > 255) {
+            return sendError(res, 400, "A title of 1 to 255 characters is required.");
+        }
+
+        db.query(
+            "UPDATE instructions SET title = ?, description = ? WHERE id = ?",
+            [title, description, req.params.id],
+            (error, result) => {
+                if (error) {
+                    return sendError(res, 500, "Failed to update instruction.", error);
+                }
+                if (result.affectedRows === 0) {
+                    return sendError(res, 404, "Instruction not found.");
+                }
+                return res.json({ success: true, message: "Instruction updated." });
+            }
+        );
+    }
+);
+
+app.delete(
+    "/instructions/:id",
+    authenticateToken,
+    (req, res) => {
+        if (!isValidId(req.params.id)) {
+            return sendError(res, 400, "Invalid instruction ID.");
+        }
+
+        db.query(
+            "DELETE FROM instructions WHERE id = ?",
+            [req.params.id],
+            (error, result) => {
+                if (error) {
+                    return sendError(res, 500, "Failed to delete instruction.", error);
+                }
+                if (result.affectedRows === 0) {
+                    return sendError(res, 404, "Instruction not found.");
+                }
+                return res.json({ success: true, message: "Instruction deleted." });
+            }
+        );
+    }
+);
+
+// ======================================================
 // CONTRACTS
 // ======================================================
 
@@ -2624,6 +3327,8 @@ app.get(
                 contract_end,
                 amount,
                 photo,
+                created_by,
+                created_by_role,
                 created_at
             FROM contracts
             ORDER BY
@@ -2776,9 +3481,11 @@ app.post(
                 contract_start,
                 contract_end,
                 amount,
-                photo
+                photo,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(
@@ -2809,7 +3516,9 @@ app.post(
                 ),
                 normalize(
                     photo
-                )
+                ),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -3149,9 +3858,11 @@ app.post(
                 amount,
                 type,
                 date,
-                description
+                description,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 customer_id,
@@ -3160,7 +3871,9 @@ app.post(
                 date,
                 normalize(
                     description
-                )
+                ),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -3590,9 +4303,11 @@ app.post(
                 deadline,
                 employee,
                 testing,
-                end_date
+                end_date,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(title),
@@ -3614,7 +4329,9 @@ app.post(
                 ),
                 normalize(
                     end_date
-                )
+                ),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -3890,9 +4607,11 @@ app.post(
                 source,
                 amount,
                 date,
-                description
+                description,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(source),
@@ -3900,7 +4619,9 @@ app.post(
                 date,
                 normalize(
                     description
-                )
+                ),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -4156,9 +4877,11 @@ app.post(
                 amount,
                 category,
                 date,
-                description
+                description,
+                created_by,
+                created_by_role
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             `,
             [
                 normalize(title),
@@ -4169,7 +4892,9 @@ app.post(
                 date,
                 normalize(
                     description
-                )
+                ),
+                req.user.id,
+                req.user.role
             ],
             (
                 err,
@@ -4372,6 +5097,8 @@ app.get(
                 ) AS remaining_amount,
                 d.due_date,
                 d.status,
+                d.created_by,
+                d.created_by_role,
                 d.description
             FROM finance_debts d
             LEFT JOIN customers c
@@ -4508,9 +5235,11 @@ app.post(
                         paid_amount,
                         due_date,
                         status,
-                        description
+                        description,
+                        created_by,
+                        created_by_role
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     `,
                     [
                         customer_id,
@@ -4525,7 +5254,9 @@ app.post(
                             "Pending",
                         normalize(
                             description
-                        )
+                        ),
+                        req.user.id,
+                        req.user.role
                     ],
                     (
                         err,
@@ -5266,7 +5997,9 @@ db.query(
         username VARCHAR(255) NOT NULL UNIQUE,
         password VARCHAR(255) NOT NULL,
         email VARCHAR(255) NULL UNIQUE,
+        phone VARCHAR(100) NULL,
         photo LONGTEXT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5322,6 +6055,8 @@ db.query(
         contract_id VARCHAR(255) NULL,
         date_id VARCHAR(255) NULL,
         photo LONGTEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5376,6 +6111,8 @@ db.query(
         province VARCHAR(255) NULL,
         address TEXT NULL,
         photo LONGTEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5408,6 +6145,8 @@ db.query(
         check_in VARCHAR(50) NULL,
         check_out VARCHAR(50) NULL,
         status VARCHAR(100) NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5499,6 +6238,8 @@ db.query(
             NOT NULL DEFAULT 0,
 
         photo LONGTEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
 
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
@@ -5532,6 +6273,8 @@ db.query(
         type VARCHAR(100) NOT NULL,
         date DATE NOT NULL,
         description TEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5566,6 +6309,8 @@ db.query(
         employee VARCHAR(255) NULL,
         testing VARCHAR(255) NULL,
         end_date DATE NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5597,6 +6342,8 @@ db.query(
             NOT NULL DEFAULT 0,
         date DATE NOT NULL,
         description TEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5629,6 +6376,8 @@ db.query(
         category VARCHAR(255) NULL,
         date DATE NOT NULL,
         description TEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )
@@ -5664,6 +6413,8 @@ db.query(
         status VARCHAR(50)
             NOT NULL DEFAULT 'Pending',
         description TEXT NULL,
+        created_by INT NULL,
+        created_by_role VARCHAR(50) NULL,
         created_at TIMESTAMP
             DEFAULT CURRENT_TIMESTAMP
     )

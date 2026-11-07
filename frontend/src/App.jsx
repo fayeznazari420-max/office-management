@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API = import.meta.env.DEV ? "http://localhost:5000" : "";
+const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:5000" : "");
 
 /* ================= SETTINGS ================= */
 
@@ -38,6 +38,9 @@ const TEXT = {
     customers: "CUSTOMERS",
     users: "USERS",
     attendance: "ATTENDANCE",
+    instructions: "INSTRUCTIONS / ORDERS",
+    instructionsDescription:
+      "Create and issue administrative instructions with a clear title and detailed description.",
     payments: "PAYMENTS",
     finance: "FINANCE",
     financeOverview: "FINANCE OVERVIEW",
@@ -64,6 +67,18 @@ const TEXT = {
     financeDescription: "FINANCE DESCRIPTION",
     projects: "PROJECTS",
     settings: "SETTINGS",
+    account: "Account",
+    instructionTitle: "INSTRUCTION TITLE",
+    instructionDescription: "INSTRUCTION DETAILS",
+    issueInstruction: "ISSUE INSTRUCTION",
+    permissions: "PERMISSIONS",
+    accountInformation: "ACCOUNT INFORMATION",
+    changePassword: "CHANGE PASSWORD",
+    currentPassword: "CURRENT PASSWORD",
+    newPassword: "NEW PASSWORD",
+    saveChanges: "SAVE CHANGES",
+    granted: "GRANTED",
+    notGranted: "NOT GRANTED",
 
     logout: "LOGOUT",
     welcome: "WELCOME BACK",
@@ -85,6 +100,9 @@ const TEXT = {
     username: "USERNAME",
     password: "PASSWORD",
     role: "ROLE",
+    accountStatus: "ACCOUNT STATUS",
+    active: "ACTIVE",
+    disabled: "DISABLED",
 
     phone: "PHONE",
     shopName: "SHOP NAME",
@@ -191,6 +209,9 @@ const TEXT = {
     customers: "مشتریان",
     users: "کاربران",
     attendance: "حاضری",
+    instructions: "دستورها / اوامر",
+    instructionsDescription:
+      "دستورهای اداری را با عنوان روشن و توضیحات کامل ایجاد و صادر کنید.",
     payments: "پرداخت‌ها",
     finance: "فایننس",
     financeOverview: "نمای کلی فایننس",
@@ -217,6 +238,18 @@ const TEXT = {
     financeDescription: "توضیحات فایننس",
     projects: "پروژه‌ها",
     settings: "تنظیمات",
+    account: "حساب کاربری",
+    instructionTitle: "عنوان دستور",
+    instructionDescription: "جزئیات دستور",
+    issueInstruction: "صدور دستور",
+    permissions: "دسترسی‌ها",
+    accountInformation: "اطلاعات حساب",
+    changePassword: "تغییر رمز عبور",
+    currentPassword: "رمز عبور فعلی",
+    newPassword: "رمز عبور جدید",
+    saveChanges: "ذخیره تغییرات",
+    granted: "فعال",
+    notGranted: "غیرفعال",
 
     logout: "خروج",
     welcome: "خوش آمدید",
@@ -238,6 +271,9 @@ const TEXT = {
     username: "نام کاربری",
     password: "رمز عبور",
     role: "نقش",
+    accountStatus: "وضعیت حساب",
+    active: "فعال",
+    disabled: "غیرفعال",
 
     phone: "شماره تماس",
     shopName: "نام فروشگاه",
@@ -333,6 +369,62 @@ const TEXT = {
   },
 };
 
+function normalizeRoleValue(role) {
+  return String(role ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function isSuperAdminRole(role) {
+  const normalized = normalizeRoleValue(role);
+  return normalized === "super_admin" || normalized === "superadmin";
+}
+
+function canManageRecordsAs(user, record) {
+  if (typeof record?.can_edit === "boolean") {
+    return record.can_edit;
+  }
+
+  return isSuperAdminRole(user?.role);
+}
+
+function canManageAccountsAs(user) {
+  return isSuperAdminRole(user?.role);
+}
+
+function canManageUserAs(user) {
+  return isSuperAdminRole(user?.role);
+}
+
+function isAdminRole(role) {
+  return normalizeRoleValue(role) === "admin";
+}
+
+function isSupportedRole(role) {
+  return ["super_admin", "superadmin", "admin", "user"].includes(
+    normalizeRoleValue(role)
+  );
+}
+
+function canCreateRecordAs(user, targetPage) {
+  const role = normalizeRoleValue(user?.role);
+  if (isSuperAdminRole(role)) return true;
+  if (role === "admin") return targetPage === "attendance";
+
+  return [
+    "customers",
+    "employees",
+    "attendance",
+    "contracts",
+    "payments",
+    "projects",
+    "income",
+    "expenses",
+    "debts",
+  ].includes(targetPage);
+}
+
 function getTodayInputDate() {
   const now = new Date();
   const local = new Date(
@@ -363,6 +455,7 @@ const emptyUser = {
   username: "",
   password: "",
   role: "user",
+  is_active: 1,
   photo: "",
 };
 
@@ -477,6 +570,17 @@ function App() {
         return null;
       }
     });
+  const [accountVerified, setAccountVerified] = useState(false);
+  const [accountVerificationError, setAccountVerificationError] = useState("");
+  const [accountForm, setAccountForm] = useState(() => ({
+    name: currentUser?.name || "",
+    email: currentUser?.email || "",
+    phone: currentUser?.phone || "",
+  }));
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+  });
 
   const [language, setLanguage] = useState(
     localStorage.getItem("office_language") || "en"
@@ -503,11 +607,19 @@ function App() {
     }
   });
 
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState(() =>
+    "dashboard"
+  );
 
   const [customers, setCustomers] = useState([]);
   const [users, setUsers] = useState([]);
   const [attendance, setAttendance] = useState([]);
+  const [instructions, setInstructions] = useState([]);
+  const [instructionForm, setInstructionForm] = useState({
+    title: "",
+    description: "",
+  });
+  const [editingInstruction, setEditingInstruction] = useState(null);
   const [payments, setPayments] = useState([]);
   const [projects, setProjects] = useState([]);
   const [financeIncome, setFinanceIncome] = useState([]);
@@ -548,6 +660,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     localStorage.getItem("office_sidebar_collapsed") === "true"
   );
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [toast, setToast] = useState("");
 
@@ -697,6 +810,13 @@ function App() {
   }, [loggedIn]);
 
   useEffect(() => {
+    if (page === "users" && !canManageAccountsAs(currentUser)) {
+      setPage(isAdminRole(currentUser?.role) ? "attendance" : "dashboard");
+      setRecordFormOpen(false);
+    }
+  }, [page, currentUser]);
+
+  useEffect(() => {
     if (!toast) return;
 
     const timer = setTimeout(() => {
@@ -727,7 +847,7 @@ function App() {
     const data = await response.json();
 
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         localStorage.removeItem("office_logged_in");
         localStorage.removeItem("office_token");
         localStorage.removeItem("office_user");
@@ -736,6 +856,8 @@ function App() {
         sessionStorage.removeItem("office_user");
         setLoggedIn(false);
         setCurrentUser(null);
+        setAccountVerified(false);
+        setAccountVerificationError("");
       }
 
       throw new Error(
@@ -755,9 +877,42 @@ function App() {
     setCustomers(data);
   }
 
-  async function fetchUsers() {
+  async function fetchUsers(account = currentUser) {
+    if (!canManageAccountsAs(account)) {
+      setUsers([]);
+      return;
+    }
+
     const data = await api("/users");
     setUsers(data);
+  }
+
+  async function fetchAccount() {
+    const account = await api("/api/me");
+    setCurrentUser(account);
+    if (!isSupportedRole(account.role)) {
+      throw new Error("This account role is not active.");
+    }
+    if (
+      normalizeRoleValue(currentUser?.role) !==
+      normalizeRoleValue(account.role)
+    ) {
+      setPage("dashboard");
+      setRecordFormOpen(false);
+    }
+    setAccountForm({
+      name: account.name || "",
+      email: account.email || "",
+      phone: account.phone || "",
+    });
+
+    const storage = localStorage.getItem("office_token")
+      ? localStorage
+      : sessionStorage;
+    storage.setItem("office_user", JSON.stringify(account));
+    setAccountVerificationError("");
+    setAccountVerified(true);
+    return account;
   }
 
   async function fetchEmployees() {
@@ -774,7 +929,11 @@ function App() {
       if (!Array.isArray(data)) data = [];
 
       // Preserve existing employees created by the earlier local-only version.
-      if (data.length === 0 && cached.length > 0) {
+      if (
+        data.length === 0 &&
+        cached.length > 0 &&
+        canManageAccountsAs(currentUser)
+      ) {
         for (const item of cached) {
           const { id, created_at, ...payload } = item;
           await api("/employees", {
@@ -788,8 +947,7 @@ function App() {
       setEmployees(Array.isArray(data) ? data : []);
       saveLocalList("office_employees", Array.isArray(data) ? data : []);
     } catch (error) {
-      // The cached data stays visible if the backend is temporarily unavailable.
-      setEmployees(cached);
+      setEmployees(isAdminRole(currentUser?.role) ? [] : cached);
       console.warn("Could not load employees from API:", error.message);
     }
   }
@@ -808,7 +966,11 @@ function App() {
       if (!Array.isArray(data)) data = [];
 
       // Preserve existing contracts created by the earlier local-only version.
-      if (data.length === 0 && cached.length > 0) {
+      if (
+        data.length === 0 &&
+        cached.length > 0 &&
+        canManageAccountsAs(currentUser)
+      ) {
         for (const item of cached) {
           const { id, created_at, days_left, contract_status, ...payload } = item;
           await api("/contracts", {
@@ -830,6 +992,44 @@ function App() {
   async function fetchAttendance() {
     const data = await api("/attendance");
     setAttendance(Array.isArray(data) ? data : []);
+  }
+
+  async function fetchInstructions() {
+    const data = await api("/instructions");
+    setInstructions(Array.isArray(data) ? data : []);
+  }
+
+  async function saveInstruction(event) {
+    event.preventDefault();
+    try {
+      if (editingInstruction) {
+        await api(`/instructions/${editingInstruction}`, {
+          method: "PUT",
+          body: JSON.stringify(instructionForm),
+        });
+      } else {
+        await api("/instructions", {
+          method: "POST",
+          body: JSON.stringify(instructionForm),
+        });
+      }
+      setInstructionForm({ title: "", description: "" });
+      setEditingInstruction(null);
+      await fetchInstructions();
+      showToast(language === "fa" ? "دستور صادر شد" : "Instruction issued");
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  async function deleteInstruction(id) {
+    try {
+      await api(`/instructions/${id}`, { method: "DELETE" });
+      await fetchInstructions();
+      showToast(language === "fa" ? "دستور حذف شد" : "Instruction deleted");
+    } catch (error) {
+      showToast(error.message);
+    }
   }
 
   async function fetchPayments() {
@@ -861,18 +1061,34 @@ function App() {
     setRefreshing(true);
 
     try {
-      await Promise.all([
-        fetchCustomers(),
-        fetchUsers(),
-        fetchEmployees(),
-        fetchContracts(),
-        fetchAttendance(),
-        fetchPayments(),
-        fetchProjects(),
-        fetchFinanceIncome(),
-        fetchFinanceExpenses(),
-        fetchFinanceDebts(),
-      ]);
+      const account = await fetchAccount();
+      if (isAdminRole(account.role)) {
+        setUsers([]);
+        await Promise.all([
+          fetchEmployees(),
+          fetchAttendance(),
+          fetchInstructions(),
+        ]);
+      } else {
+        const businessData = [
+          fetchCustomers(),
+          fetchEmployees(),
+          fetchContracts(),
+          fetchAttendance(),
+          fetchPayments(),
+          fetchProjects(),
+          fetchFinanceIncome(),
+          fetchFinanceExpenses(),
+          fetchFinanceDebts(),
+          fetchInstructions(),
+        ];
+        if (canManageAccountsAs(account)) {
+          businessData.push(fetchUsers(account));
+        } else {
+          setUsers([]);
+        }
+        await Promise.all(businessData);
+      }
 
       showToast(
         language === "fa"
@@ -881,6 +1097,12 @@ function App() {
       );
     } catch (error) {
       showToast(error.message);
+      if (!accountVerified) {
+        setAccountVerificationError(error.message);
+      }
+      if (error.message.includes("not active")) {
+        logout();
+      }
     }
 
     setRefreshing(false);
@@ -1159,6 +1381,7 @@ function App() {
       }
 
       setCurrentUser(data.user);
+      setPage("dashboard");
       setLoggedIn(true);
 
       setLoginForm({
@@ -1172,13 +1395,13 @@ function App() {
           : "Login successful"
       );
     } catch (error) {
-      const isPendingApproval = String(error?.message || "")
+      const needsActiveRole = String(error?.message || "")
         .toLowerCase()
-        .includes("pending approval");
-      const message = isPendingApproval
+        .includes("active role");
+      const message = needsActiveRole
         ? language === "fa"
-          ? "حساب شما ساخته شده و منتظر تأیید مدیر است."
-          : "Your account is waiting for administrator approval."
+          ? "برای ورود، حساب باید توسط سوپر ادمین به یک نقش فعال اختصاص داده شود."
+          : "A Super Admin must assign your account an active role before you can sign in."
         : language === "fa"
           ? "ایمیل یا رمز عبور اشتباه است."
           : "Incorrect email or password.";
@@ -1258,8 +1481,8 @@ function App() {
 
       showToast(
         language === "fa"
-          ? "حساب ساخته شد. پس از تأیید مدیر می‌توانید وارد شوید."
-          : "Account created. You can sign in after an administrator approves it."
+          ? "حساب ساخته شد. پس از تعیین نقش توسط سوپر ادمین می‌توانید وارد شوید."
+          : "Account created. A Super Admin must assign an active role before sign-in."
       );
     } catch (error) {
       const rawMessage = String(error?.message || "");
@@ -1290,8 +1513,49 @@ function App() {
 
     setLoggedIn(false);
     setCurrentUser(null);
+    setAccountVerified(false);
+    setAccountVerificationError("");
+    setUsers([]);
     setPage("dashboard");
     setRecordFormOpen(false);
+  }
+
+  async function saveAccount(e) {
+    e.preventDefault();
+
+    try {
+      await api("/api/me", {
+        method: "PUT",
+        body: JSON.stringify(accountForm),
+      });
+      await fetchAccount();
+      showToast(
+        language === "fa"
+          ? "اطلاعات حساب ذخیره شد"
+          : "Account information saved"
+      );
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  async function changePassword(e) {
+    e.preventDefault();
+
+    try {
+      await api("/api/me/password", {
+        method: "POST",
+        body: JSON.stringify(passwordForm),
+      });
+      setPasswordForm({ currentPassword: "", newPassword: "" });
+      showToast(
+        language === "fa"
+          ? "رمز عبور تغییر کرد"
+          : "Password changed"
+      );
+    } catch (error) {
+      showToast(error.message);
+    }
   }
 
   /* ================= SETTINGS ================= */
@@ -1316,6 +1580,13 @@ function App() {
   }
 
   function startNewRecord(targetPage = page) {
+    if (
+      (targetPage === "users" && !canManageAccountsAs(currentUser)) ||
+      !canCreateRecordAs(currentUser, targetPage)
+    ) {
+      return;
+    }
+
     setPage(targetPage);
     setSearch("");
     setRecordFormOpen(true);
@@ -1395,6 +1666,12 @@ function App() {
   }
 
   function showListPage(targetPage) {
+    if (targetPage === "users" && !canManageAccountsAs(currentUser)) {
+      setPage("dashboard");
+      setRecordFormOpen(false);
+      return;
+    }
+
     setPage(targetPage);
     setSearch("");
     setRecordFormOpen(false);
@@ -1582,6 +1859,7 @@ function App() {
       username: item.username || "",
       password: "",
       role: item.role || "user",
+      is_active: Number(item.is_active ?? 1),
       photo: getStoredPhoto("user", item.id),
     });
 
@@ -2570,7 +2848,46 @@ function App() {
 
   /* ================= LOGIN PAGE ================= */
 
-  if (!loggedIn) {
+  if (loggedIn && !accountVerified) {
+    return (
+      <>
+        <style>{styles}</style>
+        <div className={`login-page ${theme}`}>
+          <div className="login-box account-verification" role="status" aria-live="polite">
+            <h1>
+              {accountVerificationError
+                ? language === "fa" ? "تأیید حساب انجام نشد" : "ACCOUNT VERIFICATION FAILED"
+                : language === "fa" ? "در حال تأیید حساب…" : "VERIFYING ACCOUNT…"}
+            </h1>
+            {accountVerificationError && (
+              <p>{accountVerificationError}</p>
+            )}
+            {accountVerificationError && (
+              <button
+                type="button"
+                className="primary-button login-button"
+                onClick={refreshAll}
+                disabled={refreshing}
+              >
+                {refreshing
+                  ? "..."
+                  : language === "fa" ? "تلاش دوباره" : "RETRY"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary-button login-button"
+              onClick={logout}
+            >
+              {t.logout}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!loggedIn || !isSupportedRole(currentUser?.role)) {
     return (
       <>
         <style>{styles}</style>
@@ -2760,8 +3077,8 @@ function App() {
 
                 <p style={{ fontSize: 12, lineHeight: 1.7, marginTop: 10 }}>
                   {language === "fa"
-                    ? "حساب تازه پس از تأیید مدیر سیستم فعال می‌شود."
-                    : "New accounts are activated after administrator approval."}
+                    ? "حساب تازه پس از تعیین نقش توسط سوپر ادمین فعال می‌شود."
+                    : "A Super Admin must assign a role before a new account is active."}
                 </p>
 
                 <button
@@ -3036,11 +3353,1149 @@ function App() {
     padding: 9px 10px !important;
   }
       }
-      `}</style>
+
+      :root {
+        color-scheme: light;
+        --om-navy: #142b39;
+        --om-navy-deep: #10232f;
+        --om-teal: #087f70;
+        --om-teal-strong: #06695d;
+        --om-ink: #1b2c35;
+        --om-muted: #63747d;
+        --om-line: #dce5e7;
+        --om-workspace: #f3f6f7;
+        --om-surface: #ffffff;
+        --om-shadow: 0 8px 24px rgba(24, 48, 57, .07);
+      }
+
+      html,
+      body,
+      #root {
+        width: 100% !important;
+        min-height: 100% !important;
+        overflow-x: hidden !important;
+      }
+
+      body {
+        background: var(--om-workspace) !important;
+        color: var(--om-ink) !important;
+        font-family: Inter, "Noto Sans Arabic", "Segoe UI", Arial, sans-serif !important;
+      }
+
+      .app,
+      .app.day {
+        min-height: 100vh !important;
+        background: var(--om-workspace) !important;
+        color: var(--om-ink) !important;
+      }
+
+      .app.rtl {
+        font-family: "Noto Sans Arabic", Inter, "Segoe UI", Arial, sans-serif !important;
+      }
+
+      .app .sidebar,
+      .app.day .sidebar,
+      .app.night .sidebar {
+        background: var(--om-navy) !important;
+        border-color: #24404d !important;
+        box-shadow: 8px 0 28px rgba(12, 31, 41, .12) !important;
+      }
+
+      .app .brand {
+        min-height: 68px !important;
+        align-items: center !important;
+        padding: 5px 8px 18px !important;
+        border-color: rgba(255,255,255,.13) !important;
+      }
+
+      .app .brand-logo,
+      .app.day .brand-logo,
+      .app.night .brand-logo,
+      .login-page .login-logo {
+        background: var(--om-teal) !important;
+        border: 0 !important;
+        border-radius: 12px !important;
+        box-shadow: none !important;
+        color: #fff !important;
+      }
+
+      .app .brand-copy strong,
+      .app.day .brand-copy strong,
+      .app.night .brand-copy strong {
+        color: #f5faf9 !important;
+        font-size: 13px !important;
+        letter-spacing: 1.15px !important;
+      }
+
+      .app .brand-copy small,
+      .app.day .brand-copy small,
+      .app.night .brand-copy small {
+        color: #a7bdc3 !important;
+        font-size: 9px !important;
+        letter-spacing: 1.7px !important;
+      }
+
+      .app .sidebar button.account-entry,
+      .app.day .sidebar button.account-entry,
+      .app.night .sidebar button.account-entry {
+        min-height: 78px !important;
+        margin: 16px 0 14px !important;
+        border: 1px solid rgba(255,255,255,.14) !important;
+        border-radius: 12px !important;
+        background: #193644 !important;
+        color: #f3f8f8 !important;
+        box-shadow: none !important;
+      }
+
+      .app .sidebar button.account-entry:hover,
+      .app .sidebar button.account-entry[aria-current="page"] {
+        border-color: rgba(69, 190, 166, .62) !important;
+        background: #1d414d !important;
+      }
+
+      .app .sidebar-profile-info strong,
+      .app.day .sidebar-profile-info strong,
+      .app.night .sidebar-profile-info strong {
+        color: #f6f9fa !important;
+      }
+
+      .app .sidebar-role-badge {
+        color: #b7ccc9 !important;
+        background: rgba(255,255,255,.08) !important;
+        border-color: rgba(255,255,255,.13) !important;
+      }
+
+      .app .account-entry-label {
+        color: #6bd0b6 !important;
+      }
+
+      .app #primary-navigation {
+        gap: 5px !important;
+        margin-top: 8px !important;
+        padding: 0 2px 12px !important;
+      }
+
+      .app .nav-button,
+      .app.day .nav-button,
+      .app.night .nav-button {
+        min-height: 42px !important;
+        padding: 9px 11px !important;
+        border: 1px solid transparent !important;
+        border-radius: 9px !important;
+        background: transparent !important;
+        color: #c0d0d4 !important;
+        box-shadow: none !important;
+        transform: none !important;
+      }
+
+      .app .nav-button .nav-icon {
+        width: 22px !important;
+        color: #9eb4b9 !important;
+        font-size: 17px !important;
+      }
+
+      .app .nav-button .nav-label {
+        color: inherit !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        letter-spacing: .1px !important;
+      }
+
+      .app .nav-button:hover,
+      .app.day .nav-button:hover,
+      .app.night .nav-button:hover {
+        background: rgba(255,255,255,.07) !important;
+        border-color: rgba(255,255,255,.08) !important;
+        color: #fff !important;
+      }
+
+      .app .nav-button.active,
+      .app.day .nav-button.active,
+      .app.night .nav-button.active {
+        background: rgba(12, 139, 119, .23) !important;
+        border-color: rgba(73, 193, 169, .28) !important;
+        color: #effcf8 !important;
+        box-shadow: inset 3px 0 0 #28ad94 !important;
+      }
+
+      .app .nav-button.active .nav-icon {
+        color: #69d6bd !important;
+      }
+
+      .app .finance-subnav,
+      .app.day .finance-subnav,
+      .app.night .finance-subnav {
+        margin: 0 0 5px 8px !important;
+        padding: 5px !important;
+        border: 0 !important;
+        border-left: 1px solid rgba(255,255,255,.17) !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+      }
+
+      .app.rtl .finance-subnav {
+        margin: 0 8px 5px 0 !important;
+        border-left: 0 !important;
+        border-right: 1px solid rgba(255,255,255,.17) !important;
+      }
+
+      .app .finance-subnav button {
+        min-height: 34px !important;
+        border-radius: 7px !important;
+        color: #b9cbce !important;
+        text-align: start !important;
+      }
+
+      .app .finance-subnav button:hover,
+      .app .finance-subnav button.active {
+        background: rgba(255,255,255,.08) !important;
+        color: #fff !important;
+      }
+
+      .app .logout-button {
+        min-height: 42px !important;
+        border: 1px solid rgba(255,255,255,.12) !important;
+        border-radius: 9px !important;
+        background: rgba(255,255,255,.045) !important;
+        color: #d2e0e1 !important;
+        box-shadow: none !important;
+      }
+
+      .app .logout-button:hover {
+        background: rgba(255,255,255,.09) !important;
+        color: #fff !important;
+      }
+
+      .app .main,
+      .app.day .main,
+      .app.night .main {
+        min-width: 0 !important;
+        background: var(--om-workspace) !important;
+        color: var(--om-ink) !important;
+      }
+
+      .app .topbar,
+      .app.day .topbar,
+      .app.night .topbar {
+        height: 72px !important;
+        padding: 0 30px !important;
+        border-bottom: 1px solid var(--om-line) !important;
+        background: rgba(255,255,255,.96) !important;
+        color: var(--om-ink) !important;
+        box-shadow: 0 2px 8px rgba(24,48,57,.025) !important;
+        backdrop-filter: none !important;
+        z-index: 40 !important;
+      }
+
+      .app .topbar strong,
+      .app.day .topbar strong,
+      .app.night .topbar strong {
+        color: var(--om-ink) !important;
+        font-size: 13px !important;
+        font-weight: 650 !important;
+        letter-spacing: 0 !important;
+      }
+
+      .app .header-account-entry {
+        min-height: 42px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 4px 10px 4px 5px !important;
+        border: 1px solid var(--om-line) !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: none !important;
+      }
+
+      .app .header-account-entry:hover {
+        border-color: #9bcfc4 !important;
+        background: #f5faf8 !important;
+      }
+
+      .app .header-account-avatar {
+        width: 30px !important;
+        height: 30px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+        background: #e6f4f0 !important;
+        color: var(--om-teal-strong) !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+      }
+
+      .app .header-account-name {
+        color: var(--om-ink) !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+      }
+
+      .app .header-account-label {
+        color: var(--om-teal-strong) !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+      }
+
+      .app .header-account-entry .header-account-icon {
+        width: 17px !important;
+        height: 17px !important;
+        color: var(--om-teal) !important;
+      }
+
+      .app .top-label {
+        color: var(--om-muted) !important;
+        font-size: 10px !important;
+        letter-spacing: .6px !important;
+      }
+
+      .app .top-actions {
+        gap: 8px !important;
+      }
+
+      .app .top-actions > button,
+      .app .clock,
+      .app .top-language {
+        border-color: var(--om-line) !important;
+        border-radius: 9px !important;
+        background: #fff !important;
+        color: #40545c !important;
+        box-shadow: none !important;
+      }
+
+      .app .top-language button {
+        min-height: 30px !important;
+        color: #52666d !important;
+      }
+
+      .app .top-language button.selected {
+        background: #e8f4f1 !important;
+        color: var(--om-teal-strong) !important;
+      }
+
+      .app .top-actions > button:hover {
+        border-color: #9bcfc4 !important;
+        background: #f0f8f6 !important;
+        color: var(--om-teal-strong) !important;
+      }
+
+      .app .content,
+      .app.day .content,
+      .app.night .content {
+        width: auto !important;
+        max-width: 1600px !important;
+        min-height: calc(100vh - 72px) !important;
+        margin: 0 auto !important;
+        padding: 27px 30px 42px !important;
+        overflow: visible !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        color: var(--om-ink) !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+      }
+
+      .app .content::before {
+        display: none !important;
+      }
+
+      .app .page-title,
+      .app.day .page-title,
+      .app.night .page-title {
+        margin: 0 0 22px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        color: var(--om-ink) !important;
+        backdrop-filter: none !important;
+      }
+
+      .app .breadcrumbs {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        margin-bottom: 8px !important;
+        color: #819198 !important;
+        font-size: 10px !important;
+        letter-spacing: .45px !important;
+      }
+
+      .app .page-title h1,
+      .app.day .page-title h1,
+      .app.night .page-title h1 {
+        color: var(--om-ink) !important;
+        font-size: clamp(20px, 2vw, 25px) !important;
+        font-weight: 700 !important;
+        line-height: 1.35 !important;
+        letter-spacing: -.3px !important;
+        text-transform: none !important;
+      }
+
+      .app .page-title p,
+      .app .dashboard-intro {
+        margin-top: 6px !important;
+        color: var(--om-muted) !important;
+        font-size: 13px !important;
+        line-height: 1.65 !important;
+      }
+
+      .app .welcome-card,
+      .app.day .welcome-card {
+        min-height: 120px !important;
+        margin-bottom: 18px !important;
+        padding: 22px 24px !important;
+        border: 1px solid var(--om-line) !important;
+        border-radius: 14px !important;
+        background: #fff !important;
+        box-shadow: var(--om-shadow) !important;
+      }
+
+      .app .welcome-card::before,
+      .app .welcome-card::after {
+        display: none !important;
+      }
+
+      .app .welcome-card h2 {
+        color: var(--om-ink) !important;
+        font-size: 19px !important;
+        letter-spacing: -.2px !important;
+      }
+
+      .app .welcome-card p,
+      .app .welcome-card small {
+        color: var(--om-muted) !important;
+      }
+
+      .app .stats-grid,
+      .app .payment-summary {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)) !important;
+        gap: 14px !important;
+        margin: 0 0 18px !important;
+      }
+
+      .app .stat,
+      .app.day .stat,
+      .app.night .stat {
+        min-width: 0 !important;
+        min-height: 94px !important;
+        padding: 16px 18px !important;
+        border: 1px solid var(--om-line) !important;
+        border-radius: 12px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: var(--om-shadow) !important;
+        backdrop-filter: none !important;
+      }
+
+      .app .stat > span {
+        width: 36px !important;
+        height: 36px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border: 0 !important;
+        border-radius: 10px !important;
+        background: #e9f5f2 !important;
+        color: var(--om-teal) !important;
+        font-size: 11px !important;
+        font-weight: 750 !important;
+      }
+
+      .app .stat small {
+        color: var(--om-muted) !important;
+        font-size: 11px !important;
+      }
+
+      .app .stat strong {
+        color: var(--om-ink) !important;
+        font-size: 21px !important;
+        font-weight: 700 !important;
+      }
+
+      .app .dashboard-grid,
+      .app .account-grid {
+        gap: 16px !important;
+      }
+
+      .app .dashboard-panel,
+      .app.day .dashboard-panel,
+      .app .currency-card,
+      .app .warning-card,
+      .app .settings-card,
+      .app .form-card,
+      .app .table-card,
+      .app .payment-box,
+      .app .finance-card,
+      .app .expense-chart-panel,
+      .app .quick-actions,
+      .app .quick-action,
+      .app .empty,
+      .app .search-card,
+      .app .chart-card,
+      .app .modal,
+      .app .modal-card {
+        border: 1px solid var(--om-line) !important;
+        border-radius: 12px !important;
+        background: var(--om-surface) !important;
+        color: var(--om-ink) !important;
+        box-shadow: var(--om-shadow) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
+
+      .app .dashboard-panel,
+      .app .settings-card {
+        padding: 18px !important;
+      }
+
+      .app .section-title {
+        margin-bottom: 13px !important;
+        border-color: var(--om-line) !important;
+      }
+
+      .app .section-title h2,
+      .app .settings-header h2,
+      .app .form-card-title,
+      .app .dashboard-panel strong {
+        color: var(--om-ink) !important;
+      }
+
+      .app .section-title h2,
+      .app .settings-header h2 {
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0 !important;
+      }
+
+      .app .recent-row,
+      .app .admin-instruction-row {
+        border-color: #edf1f2 !important;
+      }
+
+      .app .recent-row strong,
+      .app .admin-instruction-row strong {
+        color: var(--om-ink) !important;
+      }
+
+      .app .recent-row small,
+      .app .admin-instruction-row span,
+      .app .admin-instruction-row small {
+        color: var(--om-muted) !important;
+      }
+
+      .app .currency-card,
+      .app .warning-card {
+        padding: 16px 18px !important;
+      }
+
+      .app .finance-card {
+        min-height: 92px !important;
+        padding: 16px !important;
+      }
+
+      .app .finance-card strong {
+        color: var(--om-teal-strong) !important;
+      }
+
+      .app .page-tools,
+      .app .global-search {
+        gap: 12px !important;
+        margin-bottom: 14px !important;
+        border: 1px solid var(--om-line) !important;
+        border-radius: 11px !important;
+        background: #fff !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+      }
+
+      .app .page-search input,
+      .app .global-search input,
+      .app .field input,
+      .app .field select,
+      .app .field textarea,
+      .app input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+      .app select,
+      .app textarea {
+        min-height: 42px !important;
+        border: 1px solid #d5e0e2 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+      }
+
+      .app .field textarea,
+      .app textarea {
+        min-height: 96px !important;
+      }
+
+      .app input::placeholder,
+      .app textarea::placeholder {
+        color: #87979d !important;
+        opacity: 1 !important;
+      }
+
+      .app .field > span,
+      .app .field label,
+      .app .settings-header p {
+        color: #53666e !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0 !important;
+      }
+
+      .app .field input:focus,
+      .app .field select:focus,
+      .app .field textarea:focus,
+      .app input:focus,
+      .app select:focus,
+      .app textarea:focus {
+        border-color: #58a999 !important;
+        box-shadow: 0 0 0 3px rgba(8, 127, 112, .12) !important;
+        outline: none !important;
+      }
+
+      .app table {
+        width: 100% !important;
+        min-width: 720px !important;
+        border-collapse: separate !important;
+        border-spacing: 0 !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+      }
+
+      .app th {
+        padding: 12px 14px !important;
+        border-bottom: 1px solid #dce6e7 !important;
+        background: #f4f8f8 !important;
+        color: #52666d !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0 !important;
+        text-align: start !important;
+      }
+
+      .app td {
+        padding: 12px 14px !important;
+        border-bottom: 1px solid #edf1f2 !important;
+        background: #fff !important;
+        color: #30434b !important;
+        font-size: 12px !important;
+        line-height: 1.55 !important;
+      }
+
+      .app tbody tr:hover td {
+        background: #f7fbfa !important;
+      }
+
+      .app .table-card,
+      .app .table-scroll {
+        max-width: 100% !important;
+        overflow-x: auto !important;
+        border-radius: 12px !important;
+        scrollbar-color: #b7c9c8 #f0f4f4;
+      }
+
+      .app .table-card {
+        overflow: hidden !important;
+      }
+
+      .app .table-scroll {
+        border: 0 !important;
+        background: #fff !important;
+      }
+
+      .app .primary-button,
+      .app .new-record-button,
+      .app .login-button,
+      .app .primary-btn {
+        min-height: 40px !important;
+        border: 1px solid var(--om-teal) !important;
+        border-radius: 8px !important;
+        background: var(--om-teal) !important;
+        color: #fff !important;
+        box-shadow: none !important;
+        font-size: 12px !important;
+        font-weight: 650 !important;
+        letter-spacing: 0 !important;
+      }
+
+      .app .primary-button:hover,
+      .app .new-record-button:hover,
+      .app .login-button:hover {
+        background: var(--om-teal-strong) !important;
+        border-color: var(--om-teal-strong) !important;
+        transform: translateY(-1px);
+      }
+
+      .app .secondary-button,
+      .app .tool-button,
+      .app .edit-button,
+      .app .receipt-button,
+      .app .refresh-button,
+      .app .theme-button,
+      .app .cancel-button {
+        min-height: 38px !important;
+        border: 1px solid #d5e0e2 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: #40565e !important;
+        box-shadow: none !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+      }
+
+      .app .secondary-button:hover,
+      .app .tool-button:hover,
+      .app .edit-button:hover,
+      .app .cancel-button:hover {
+        border-color: #94c6bc !important;
+        background: #f2f8f6 !important;
+        color: var(--om-teal-strong) !important;
+      }
+
+      .app .delete-button {
+        border: 1px solid #efd2d5 !important;
+        border-radius: 8px !important;
+        background: #fff7f7 !important;
+        color: #a34450 !important;
+        box-shadow: none !important;
+      }
+
+      .app .action-buttons {
+        min-width: 0 !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+      }
+
+      .app .action-buttons button {
+        min-width: 58px !important;
+        min-height: 34px !important;
+        padding: 7px 10px !important;
+        font-size: 11px !important;
+      }
+
+      .app .form-card {
+        margin-bottom: 20px !important;
+        overflow: hidden !important;
+      }
+
+      .app .form-card-title {
+        min-height: 46px !important;
+        padding: 12px 16px !important;
+        border-bottom: 1px solid var(--om-line) !important;
+        background: #f8fafb !important;
+        font-size: 13px !important;
+        letter-spacing: 0 !important;
+      }
+
+      .app .form-grid {
+        gap: 14px !important;
+        padding: 16px !important;
+      }
+
+      .app .instructions-description {
+        max-width: 760px !important;
+        margin: -10px 0 18px !important;
+        color: var(--om-muted) !important;
+        font-size: 13px !important;
+        line-height: 1.7 !important;
+      }
+
+      .app .content:has(.instructions-description) .form-card {
+        max-width: 1040px !important;
+      }
+
+      .app .content:has(.instructions-description) .form-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto !important;
+        align-items: end !important;
+      }
+
+      .app .content:has(.instructions-description) .form-grid > button {
+        white-space: nowrap !important;
+      }
+
+      .app .top-label {
+        display: none !important;
+      }
+
+      .app .header-account-name {
+        display: none !important;
+      }
+
+      .app .content:has(.instructions-description) .finance-cards-grid {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+        gap: 14px !important;
+      }
+
+      .app .content:has(.instructions-description) .finance-card {
+        align-items: flex-start !important;
+        gap: 10px !important;
+      }
+
+      .app .account-grid {
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)) !important;
+        align-items: start !important;
+      }
+
+      .app .account-profile-summary {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+        padding: 0 16px 14px !important;
+      }
+
+      .app .account-avatar {
+        width: 48px !important;
+        height: 48px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+        background: #e6f4f0 !important;
+        color: var(--om-teal-strong) !important;
+        font-size: 18px !important;
+        font-weight: 700 !important;
+      }
+
+      .app .account-profile-copy {
+        display: flex !important;
+        min-width: 0 !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+      }
+
+      .app .account-profile-copy strong {
+        overflow-wrap: anywhere !important;
+        color: var(--om-ink) !important;
+        font-size: 14px !important;
+      }
+
+      .app .account-profile-copy span {
+        color: var(--om-muted) !important;
+        font-size: 12px !important;
+      }
+
+      .app .account-role {
+        margin: 0 16px 16px !important;
+        padding: 12px 14px !important;
+        border: 1px solid var(--om-line) !important;
+        border-radius: 9px !important;
+        background: #f7f9fa !important;
+      }
+
+      .app .account-role span {
+        display: inline-flex !important;
+        padding: 4px 9px !important;
+        border-radius: 999px !important;
+        background: #e6f4f0 !important;
+        color: var(--om-teal-strong) !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+      }
+
+      .app .empty {
+        min-height: 78px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 18px !important;
+        color: #788890 !important;
+        font-size: 12px !important;
+        box-shadow: none !important;
+      }
+
+      .app .status {
+        border-radius: 999px !important;
+        font-size: 10px !important;
+        font-weight: 650 !important;
+      }
+
+      .app .mobile-menu-toggle {
+        border: 1px solid var(--om-line) !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: none !important;
+      }
+
+      .app :focus-visible,
+      .login-page :focus-visible {
+        outline: 3px solid rgba(8, 127, 112, .35) !important;
+        outline-offset: 2px !important;
+      }
+
+      .app .toast {
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: 0 12px 32px rgba(20,43,57,.16) !important;
+      }
+
+      .app.night {
+        --om-ink: #e3edef;
+        --om-muted: #a6b8bc;
+        --om-line: #334951;
+        --om-workspace: #172a33;
+        --om-surface: #20363f;
+        --om-shadow: 0 8px 24px rgba(5, 18, 24, .20);
+        color-scheme: dark;
+      }
+
+      .app.night .topbar,
+      .app.night .header-account-entry,
+      .app.night .top-actions > button,
+      .app.night .clock,
+      .app.night .top-language,
+      .app.night .page-tools,
+      .app.night .global-search,
+      .app.night .welcome-card,
+      .app.night .stat,
+      .app.night .dashboard-panel,
+      .app.night .currency-card,
+      .app.night .warning-card,
+      .app.night .settings-card,
+      .app.night .form-card,
+      .app.night .table-card,
+      .app.night .payment-box,
+      .app.night .finance-card,
+      .app.night .quick-action,
+      .app.night .quick-actions,
+      .app.night .empty,
+      .app.night .search-card,
+      .app.night .chart-card,
+      .app.night .modal,
+      .app.night .modal-card {
+        background: var(--om-surface) !important;
+        color: var(--om-ink) !important;
+        border-color: var(--om-line) !important;
+      }
+
+      .app.night .form-card-title,
+      .app.night th,
+      .app.night .account-role {
+        background: #1a3039 !important;
+        color: var(--om-ink) !important;
+        border-color: var(--om-line) !important;
+      }
+
+      .app.night .page-title h1,
+      .app.night .header-account-name,
+      .app.night .topbar strong,
+      .app.night .section-title h2,
+      .app.night .settings-header h2,
+      .app.night .recent-row strong,
+      .app.night .finance-card strong,
+      .app.night .account-profile-copy strong {
+        color: var(--om-ink) !important;
+      }
+
+      .app.night .field input,
+      .app.night .field select,
+      .app.night .field textarea,
+      .app.night input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+      .app.night select,
+      .app.night textarea {
+        background: #182d36 !important;
+        color: var(--om-ink) !important;
+        border-color: var(--om-line) !important;
+      }
+
+      .app.night table,
+      .app.night td,
+      .app.night .table-scroll {
+        background: var(--om-surface) !important;
+        color: var(--om-ink) !important;
+      }
+
+      .app.night td {
+        border-color: #30464f !important;
+      }
+
+      .app.night tbody tr:hover td {
+        background: #29434b !important;
+      }
+
+      .login-page,
+      .login-page.day {
+        background: #edf2f3 !important;
+        color: var(--om-ink) !important;
+      }
+
+      .login-page::before,
+      .login-page::after {
+        display: none !important;
+      }
+
+      .login-page .login-box,
+      .login-page.day .login-box {
+        border: 1px solid var(--om-line) !important;
+        border-radius: 14px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+        box-shadow: 0 18px 48px rgba(20,43,57,.11) !important;
+        backdrop-filter: none !important;
+      }
+
+      .login-page .login-box h1,
+      .login-page.day .login-box h1,
+      .login-page .login-box label,
+      .login-page.day .login-box label,
+      .login-page .login-box p,
+      .login-page.day .login-box p {
+        color: var(--om-ink) !important;
+      }
+
+      .login-page .login-box input,
+      .login-page.day .login-box input {
+        border: 1px solid #d5e0e2 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: var(--om-ink) !important;
+      }
+
+      @media (max-width: 900px) {
+        .app .topbar {
+          padding-inline: 20px !important;
+        }
+
+        .app .content {
+          padding: 22px 20px 34px !important;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .app .topbar {
+          height: auto !important;
+          min-height: 64px !important;
+          padding: 10px 14px !important;
+          gap: 10px !important;
+        }
+
+        .app .topbar > div:first-child {
+          min-width: 0 !important;
+          gap: 8px !important;
+        }
+
+        .app .topbar > div:first-child strong {
+          max-width: 34vw !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+        }
+
+        .app .top-actions {
+          flex-wrap: wrap !important;
+          justify-content: flex-end !important;
+          gap: 5px !important;
+        }
+
+        .app .top-actions > button {
+          width: 34px !important;
+          height: 34px !important;
+        }
+
+        .app .header-account-entry {
+          min-height: 36px !important;
+          gap: 6px !important;
+          padding: 3px 8px 3px 4px !important;
+        }
+
+        .app .header-account-avatar {
+          width: 26px !important;
+          height: 26px !important;
+        }
+
+        .app .header-account-label {
+          font-size: 11px !important;
+        }
+
+        .app .top-language {
+          padding: 2px !important;
+        }
+
+        .app .top-language button {
+          min-height: 28px !important;
+          padding: 4px 7px !important;
+          font-size: 10px !important;
+        }
+
+        .app .content {
+          padding: 18px 14px 28px !important;
+        }
+
+        .app .dashboard-grid,
+        .app .account-grid,
+        .app .settings-grid,
+        .app .principles {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+
+        .app .stats-grid,
+        .app .payment-summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 9px !important;
+        }
+
+        .app .stat {
+          min-height: 82px !important;
+          padding: 12px !important;
+          gap: 9px !important;
+        }
+
+        .app .stat strong {
+          font-size: 17px !important;
+        }
+
+        .app .form-grid,
+        .app .content:has(.instructions-description) .form-grid {
+          grid-template-columns: minmax(0, 1fr) !important;
+          padding: 13px !important;
+        }
+
+        .app .page-tools {
+          align-items: stretch !important;
+          flex-direction: column !important;
+        }
+
+        .app .page-tool-actions {
+          flex-wrap: wrap !important;
+        }
+
+        .app .content:has(.instructions-description) .instructions-description {
+          margin-top: -6px !important;
+        }
+
+        .app .table-card {
+          width: 100% !important;
+        }
+
+        .app table {
+          min-width: 640px !important;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .app .stats-grid,
+        .app .payment-summary {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+      }
+            `}</style>
 
       <div
         className={`app ${language === "fa" ? "rtl" : ""} ${theme} ${
           sidebarCollapsed ? "sidebar-collapsed" : ""
+        } ${mobileMenuOpen ? "mobile-menu-open" : ""} ${
+          isSuperAdminRole(currentUser?.role) ? "role-super-admin" : ""
         }`}
       >
 
@@ -3090,25 +4545,63 @@ function App() {
             </button>
           </div>
 
-          <div className="sidebar-profile">
+          <button
+            type="button"
+            className="sidebar-profile account-entry"
+            onClick={() => {
+              setRecordFormOpen(false);
+              setPage("my-account");
+              setOpenMenu("");
+              setMobileMenuOpen(false);
+            }}
+            title={t.account}
+            aria-label={`${t.account}: ${currentUser?.name || currentUser?.username || "User"}`}
+            aria-current={page === "my-account" ? "page" : undefined}
+          >
             <div className="sidebar-profile-avatar">
               {(currentUser?.name || currentUser?.username || "U")
                 .trim()
                 .slice(0, 1)
                 .toUpperCase()}
             </div>
+            <span className="account-entry-icon" aria-hidden="true">
+              <ProfileIcon />
+            </span>
             <div className="sidebar-profile-info">
               <strong>
                 {currentUser?.name || currentUser?.username || "User"}
               </strong>
-              <span>
-                {currentUser?.role || "user"}
+              <span className="sidebar-role-badge">
+                {isSuperAdminRole(currentUser?.role)
+                  ? language === "fa" ? "سوپر ادمین" : "Super Admin"
+                  : isAdminRole(currentUser?.role)
+                    ? language === "fa" ? "مدیر" : "Admin"
+                    : language === "fa" ? "کاربر" : "User"}
+              </span>
+              <span className="account-entry-label">
+                <ProfileIcon />
+                {t.account}
               </span>
             </div>
-          </div>
+          </button>
 
-          <nav>
+          <nav id="primary-navigation" onClick={() => setMobileMenuOpen(false)}>
 
+            {isAdminRole(currentUser?.role) && (
+              <NavButton
+                label={t.dashboard}
+                icon="⌂"
+                active={page === "dashboard"}
+                onClick={() => {
+                  setRecordFormOpen(false);
+                  setPage("dashboard");
+                  setOpenMenu("");
+                }}
+              />
+            )}
+
+            {!isAdminRole(currentUser?.role) && (
+              <>
             <NavButton
               label={t.dashboard}
               icon="⌂"
@@ -3253,22 +4746,24 @@ function App() {
               </div>
             )}
 
-            <NavButton
-              label={t.users}
-              icon="♙"
-              active={
-                openMenu === "users" ||
-                page === "users"
-              }
-              onClick={() =>
-                toggleSection(
-                  "users",
-                  "users"
-                )
-              }
-            />
+            {canManageAccountsAs(currentUser) && (
+              <NavButton
+                label={t.users}
+                icon="♙"
+                active={
+                  openMenu === "users" ||
+                  page === "users"
+                }
+                onClick={() =>
+                  toggleSection(
+                    "users",
+                    "users"
+                  )
+                }
+              />
+            )}
 
-            {openMenu === "users" && (
+            {canManageAccountsAs(currentUser) && openMenu === "users" && (
               <div className="finance-subnav">
                 <button
                   type="button"
@@ -3300,6 +4795,8 @@ function App() {
                     : "NEW ACCOUNT"}
                 </button>
               </div>
+            )}
+              </>
             )}
 
             <NavButton
@@ -3351,6 +4848,19 @@ function App() {
               </div>
             )}
 
+            <NavButton
+              label={t.instructions}
+              icon="▤"
+              active={page === "instructions"}
+              onClick={() => {
+                setRecordFormOpen(false);
+                setPage("instructions");
+                setOpenMenu("");
+              }}
+            />
+
+            {!isAdminRole(currentUser?.role) && (
+              <>
             <NavButton
               label={t.finance}
               icon="₣"
@@ -3549,16 +5059,20 @@ function App() {
               </div>
             )}
 
-            <NavButton
-              label={t.settings}
-              icon="⚙"
-              active={page === "settings"}
-              onClick={() => {
-                setRecordFormOpen(false);
-                setPage("settings");
-                setOpenMenu("");
-              }}
-            />
+            {isSuperAdminRole(currentUser?.role) && (
+              <NavButton
+                label={t.settings}
+                icon="⚙"
+                active={page === "settings"}
+                onClick={() => {
+                  setRecordFormOpen(false);
+                  setPage("settings");
+                  setOpenMenu("");
+                }}
+              />
+            )}
+              </>
+            )}
 
           </nav>
 
@@ -3571,6 +5085,15 @@ function App() {
 
         </aside>
 
+        {mobileMenuOpen && (
+          <button
+            type="button"
+            className="mobile-menu-backdrop"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label={language === "fa" ? "بستن منو" : "Close navigation"}
+          />
+        )}
+
         {/* MAIN AREA */}
 
         <main className="main">
@@ -3580,15 +5103,44 @@ function App() {
           <header className="topbar">
 
             <div>
+              <button
+                type="button"
+                className="mobile-menu-toggle"
+                onClick={() => setMobileMenuOpen((open) => !open)}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="primary-navigation"
+                aria-label={mobileMenuOpen
+                  ? language === "fa" ? "بستن منو" : "Close navigation"
+                  : language === "fa" ? "باز کردن منو" : "Open navigation"}
+              >
+                {mobileMenuOpen ? "×" : "☰"}
+              </button>
               <span className="top-label">
                 {t.welcome}
               </span>
-
-              <strong>
-                {currentUser?.name ||
-                  currentUser?.username ||
-                  "User"}
-              </strong>
+              <button
+                type="button"
+                className="header-account-entry"
+                onClick={() => {
+                  setRecordFormOpen(false);
+                  setPage("my-account");
+                  setOpenMenu("");
+                  setMobileMenuOpen(false);
+                }}
+                aria-label={`${t.account}: ${currentUser?.name || currentUser?.username || "User"}`}
+              >
+                <span className="header-account-avatar" aria-hidden="true">
+                  {(currentUser?.name || currentUser?.username || "U")
+                    .trim()
+                    .slice(0, 1)
+                    .toUpperCase()}
+                </span>
+                <span className="header-account-name">
+                  {currentUser?.name || currentUser?.username || "User"}
+                </span>
+                <span className="header-account-label">{t.account}</span>
+                <ProfileIcon />
+              </button>
             </div>
 
             <div className="top-actions">
@@ -3661,6 +5213,7 @@ function App() {
             "projects",
             "contracts",
           ].includes(page) &&
+          (page !== "users" || canManageAccountsAs(currentUser)) &&
           !recordFormOpen && (
             <PageTools
               t={t}
@@ -3672,16 +5225,30 @@ function App() {
               }
               onPrint={() => printVisibleTable(page)}
               onExcel={() => downloadExcelBackup(page)}
+              showExcel={!isAdminRole(currentUser?.role)}
             />
           )}
 
           {/* DASHBOARD */}
 
-          {page === "dashboard" && (
+          {page === "dashboard" && isAdminRole(currentUser?.role) && (
+            <AdminDashboard
+              t={t}
+              language={language}
+              attendance={attendance}
+              employees={employees}
+              instructions={instructions}
+              setPage={setPage}
+              startNewRecord={startNewRecord}
+            />
+          )}
+
+          {page === "dashboard" && !isAdminRole(currentUser?.role) && (
             <Dashboard
               t={t}
               customers={customers}
               users={users}
+              showUserStats={canManageAccountsAs(currentUser)}
               attendance={attendance}
               payments={payments}
               projects={projects}
@@ -3874,6 +5441,8 @@ function App() {
                               <ActionButtons
                                 edit={() => editCustomer(item)}
                                 remove={() => deleteCustomer(item.id)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -3943,7 +5512,7 @@ function App() {
                           <td>{item.email || "-"}</td>
                           <td>{item.position || "-"}</td>
                           <td>{item.province || "-"}</td>
-                          <td><ActionButtons edit={() => editEmployee(item)} remove={() => deleteEmployee(item.id)} t={t} /></td>
+                          <td><ActionButtons edit={() => editEmployee(item)} remove={() => deleteEmployee(item.id)} canEdit={canManageRecordsAs(currentUser, item)} canDelete={canManageRecordsAs(currentUser, item)} t={t} /></td>
                         </tr>
                       ))}
                     </Table>
@@ -4016,7 +5585,7 @@ function App() {
                             <td><span className={`contract-status ${status.className}`}>{status.label}</span></td>
                             <td>{formatMoney(item.amount)}</td>
                             <td><AvatarPhoto src={item.photo} /></td>
-                            <td><ActionButtons edit={() => editContract(item)} remove={() => deleteContract(item.id)} t={t} /></td>
+                            <td><ActionButtons edit={() => editContract(item)} remove={() => deleteContract(item.id)} canEdit={canManageRecordsAs(currentUser, item)} canDelete={canManageRecordsAs(currentUser, item)} t={t} /></td>
                           </tr>
                         );
                       })}
@@ -4030,7 +5599,7 @@ function App() {
 
           {/* USERS */}
 
-          {page === "users" && (
+          {page === "users" && canManageAccountsAs(currentUser) && (
             <Page title={t.users}>
 
               {recordFormOpen && (
@@ -4160,18 +5729,38 @@ function App() {
                       }
                       required
                     >
-                      <option value="pending">
-                        {language === "fa" ? "در انتظار تأیید" : "Pending approval"}
-                      </option>
+                      {!["super_admin", "admin", "user"].includes(userForm.role) && (
+                        <option value={userForm.role} disabled>
+                          {language === "fa"
+                            ? "نقش قدیمی غیرفعال — یک نقش فعال انتخاب کنید"
+                            : `Inactive legacy role (${userForm.role}) — select an active role`}
+                        </option>
+                      )}
                       <option value="admin">
                         {language === "fa" ? "مدیر (Admin)" : "Admin"}
                       </option>
-                      <option value="manager">
-                        {language === "fa" ? "مدیر اجرایی (Manager)" : "Manager"}
-                      </option>
+                      {isSuperAdminRole(currentUser?.role) && (
+                        <option value="super_admin">
+                          {language === "fa" ? "سوپر ادمین" : "Super Admin"}
+                        </option>
+                      )}
                       <option value="user">
                         {language === "fa" ? "کاربر (User)" : "User"}
                       </option>
+                    </Select>
+
+                    <Select
+                      label={t.accountStatus}
+                      value={String(userForm.is_active)}
+                      onChange={(value) =>
+                        setUserForm({
+                          ...userForm,
+                          is_active: value,
+                        })
+                      }
+                    >
+                      <option value="1">{t.active}</option>
+                      <option value="0">{t.disabled}</option>
                     </Select>
 
                     <FormButtons
@@ -4201,6 +5790,7 @@ function App() {
                         t.email,
                         t.username,
                         t.role,
+                        t.accountStatus,
                         language === "fa" ? "عکس" : "PHOTO",
                         t.action,
                       ]}
@@ -4213,11 +5803,18 @@ function App() {
                             <td>{item.email}</td>
                             <td>{item.username}</td>
                             <td>{item.role || "user"}</td>
+                            <td>
+                              {Number(item.is_active) === 1
+                                ? t.active
+                                : t.disabled}
+                            </td>
                             <td><AvatarPhoto src={item.photo || getStoredPhoto("user", item.id)} /></td>
                             <td>
                               <ActionButtons
                                 edit={() => editUser(item)}
                                 remove={() => deleteUser(item.id)}
+                                canEdit={canManageUserAs(currentUser, item)}
+                                canDelete={canManageUserAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -4416,6 +6013,8 @@ function App() {
                               <ActionButtons
                                 edit={() => editAttendance(item)}
                                 remove={() => deleteAttendance(item.id)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -4430,6 +6029,88 @@ function App() {
             </Page>
           )}
 
+
+          {page === "instructions" && (
+            <Page title={t.instructions}>
+              <p className="instructions-description">
+                {t.instructionsDescription}
+              </p>
+              {(isAdminRole(currentUser?.role) ||
+                isSuperAdminRole(currentUser?.role)) && (
+                <FormCard title={editingInstruction ? t.edit : t.issueInstruction}>
+                  <form onSubmit={saveInstruction} className="form-grid">
+                    <Input
+                      label={t.instructionTitle}
+                      value={instructionForm.title}
+                      onChange={(value) =>
+                        setInstructionForm({ ...instructionForm, title: value })
+                      }
+                      required
+                    />
+                    <Input
+                      label={t.instructionDescription}
+                      value={instructionForm.description}
+                      onChange={(value) =>
+                        setInstructionForm({
+                          ...instructionForm,
+                          description: value,
+                        })
+                      }
+                    />
+                    {editingInstruction && (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          setEditingInstruction(null);
+                          setInstructionForm({ title: "", description: "" });
+                        }}
+                      >
+                        {t.cancel}
+                      </button>
+                    )}
+                    <button className="primary-button" type="submit">
+                      {editingInstruction ? t.save : t.issueInstruction}
+                    </button>
+                  </form>
+                </FormCard>
+              )}
+
+              <SectionTitle title={t.instructions} />
+              {instructions.length === 0 ? (
+                <Empty text={t.noData} />
+              ) : (
+                <div className="finance-cards-grid">
+                  {instructions.map((instruction) => (
+                    <article className="finance-card" key={instruction.id}>
+                      <strong>{instruction.title}</strong>
+                      <small>{instruction.description || "—"}</small>
+                      <small>
+                        {instruction.created_at
+                          ? formatDisplayDate(instruction.created_at, language)
+                          : ""}
+                      </small>
+                      {isSuperAdminRole(currentUser?.role) && (
+                        <ActionButtons
+                          edit={() => {
+                            setEditingInstruction(instruction.id);
+                            setInstructionForm({
+                              title: instruction.title || "",
+                              description: instruction.description || "",
+                            });
+                          }}
+                          remove={() => deleteInstruction(instruction.id)}
+                          canEdit
+                          canDelete
+                          t={t}
+                        />
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </Page>
+          )}
 
           {/* FINANCE OVERVIEW */}
           {page === "finance" && (
@@ -4592,6 +6273,8 @@ function App() {
                               <ActionButtons
                                 edit={() => editIncome(item)}
                                 remove={() => deleteIncome(item.id)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -4753,6 +6436,8 @@ function App() {
                               <ActionButtons
                                 edit={() => editExpense(item)}
                                 remove={() => deleteExpense(item.id)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -4966,6 +6651,8 @@ function App() {
                                 <ActionButtons
                                   edit={() => editDebt(item)}
                                   remove={() => deleteDebt(item.id)}
+                                  canEdit={canManageRecordsAs(currentUser, item)}
+                                  canDelete={canManageRecordsAs(currentUser, item)}
                                   t={t}
                                 />
                               </td>
@@ -5180,6 +6867,8 @@ function App() {
                                 edit={() => editPayment(item)}
                                 remove={() => deletePayment(item.id)}
                                 receipt={() => printPaymentReceipt(item)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -5403,6 +7092,8 @@ function App() {
                               <ActionButtons
                                 edit={() => editProject(item)}
                                 remove={() => deleteProject(item.id)}
+                                canEdit={canManageRecordsAs(currentUser, item)}
+                                canDelete={canManageRecordsAs(currentUser, item)}
                                 t={t}
                               />
                             </td>
@@ -5416,6 +7107,122 @@ function App() {
             </Page>
           )}
 
+
+          {page === "my-account" && (
+            <Page title={t.account}>
+              <div className="account-grid">
+                <section className="settings-card">
+                  <div className="settings-header">
+                    <div>
+                      <h2>{t.accountInformation}</h2>
+                      <p>{t.account}</p>
+                    </div>
+                  </div>
+                  <div className="account-profile-summary">
+                    <span className="account-avatar" aria-hidden="true">
+                      {(currentUser?.name || currentUser?.username || "U")
+                        .trim()
+                        .slice(0, 1)
+                        .toUpperCase()}
+                    </span>
+                    <div className="account-profile-copy">
+                      <strong>
+                        {currentUser?.name || currentUser?.username || "User"}
+                      </strong>
+                      <span>{currentUser?.username || ""}</span>
+                    </div>
+                  </div>
+
+                  <form onSubmit={saveAccount} className="form-grid">
+                    <Input
+                      label={t.name}
+                      value={accountForm.name}
+                      onChange={(value) =>
+                        setAccountForm({ ...accountForm, name: value })
+                      }
+                      required
+                    />
+                    <label className="field">
+                      <span>{t.username}</span>
+                      <input
+                        type="text"
+                        value={currentUser?.username || ""}
+                        readOnly
+                      />
+                    </label>
+                    <Input
+                      label={t.email}
+                      type="email"
+                      value={accountForm.email}
+                      onChange={(value) =>
+                        setAccountForm({ ...accountForm, email: value })
+                      }
+                    />
+                    <Input
+                      label={t.phone}
+                      value={accountForm.phone}
+                      onChange={(value) =>
+                        setAccountForm({ ...accountForm, phone: value })
+                      }
+                    />
+                    <button className="primary-button" type="submit">
+                      {t.saveChanges}
+                    </button>
+                  </form>
+
+                  <div className="account-role">
+                    <strong>{t.role}</strong>
+                    <span>
+                      {isSuperAdminRole(currentUser?.role)
+                        ? language === "fa" ? "سوپر ادمین" : "Super Admin"
+                        : isAdminRole(currentUser?.role)
+                          ? language === "fa" ? "مدیر" : "Admin"
+                          : language === "fa" ? "کاربر" : "User"}
+                    </span>
+                  </div>
+
+                </section>
+
+                <section className="settings-card">
+                  <div className="settings-header">
+                    <div>
+                      <h2>{t.changePassword}</h2>
+                      <p>{t.currentPassword}</p>
+                    </div>
+                  </div>
+                  <form onSubmit={changePassword} className="form-grid">
+                    <Input
+                      label={t.currentPassword}
+                      type="password"
+                      value={passwordForm.currentPassword}
+                      onChange={(value) =>
+                        setPasswordForm({
+                          ...passwordForm,
+                          currentPassword: value,
+                        })
+                      }
+                      required
+                    />
+                    <Input
+                      label={t.newPassword}
+                      type="password"
+                      value={passwordForm.newPassword}
+                      onChange={(value) =>
+                        setPasswordForm({
+                          ...passwordForm,
+                          newPassword: value,
+                        })
+                      }
+                      required
+                    />
+                    <button className="primary-button" type="submit">
+                      {t.changePassword}
+                    </button>
+                  </form>
+                </section>
+              </div>
+            </Page>
+          )}
 
           {/* SETTINGS */}
 
@@ -5633,6 +7440,7 @@ function Dashboard({
   language,
   customers,
   users,
+  showUserStats,
   attendance,
   payments,
   projects,
@@ -5698,6 +7506,12 @@ function Dashboard({
 
       <div className="page-title">
 
+        <nav className="breadcrumbs" aria-label="Breadcrumb">
+          <span>OFFICE MANAGEMENT</span>
+          <span aria-hidden="true">/</span>
+          <span aria-current="page">{t.dashboard}</span>
+        </nav>
+
         <h1>
           {t.dashboard}
         </h1>
@@ -5756,11 +7570,13 @@ function Dashboard({
             code="CU"
           />
 
-          <Stat
-            number={users.length}
-            label={t.users}
-            code="US"
-          />
+          {showUserStats && (
+            <Stat
+              number={users.length}
+              label={t.users}
+              code="US"
+            />
+          )}
 
           <Stat
             number={attendance.length}
@@ -6083,13 +7899,15 @@ function Dashboard({
             + {t.customers}
           </button>
 
-          <button
-            onClick={() =>
-              setPage("users")
-            }
-          >
-            + {t.users}
-          </button>
+          {showUserStats && (
+            <button
+              onClick={() =>
+                setPage("users")
+              }
+            >
+              + {t.users}
+            </button>
+          )}
 
           <button
             onClick={() =>
@@ -6127,6 +7945,7 @@ function PageTools({
   onCreate,
   onPrint,
   onExcel,
+  showExcel,
 }) {
   return (
     <div className="page-tools">
@@ -6159,13 +7978,15 @@ function PageTools({
           🖨 {language === "fa" ? "چاپ" : "PRINT"}
         </button>
 
-        <button
-          type="button"
-          className="tool-button"
-          onClick={onExcel}
-        >
-          📊 EXCEL
-        </button>
+        {showExcel && (
+          <button
+            type="button"
+            className="tool-button"
+            onClick={onExcel}
+          >
+            📊 EXCEL
+          </button>
+        )}
       </div>
     </div>
   );
@@ -6180,17 +8001,95 @@ function Page({
 
       <div className="page-title">
 
-        <h1>{title}</h1>
+        <nav className="breadcrumbs" aria-label="Breadcrumb">
+          <span>OFFICE MANAGEMENT</span>
+          <span aria-hidden="true">/</span>
+          <span aria-current="page">{title}</span>
+        </nav>
 
-        <p>
-          OFFICE MANAGEMENT
-        </p>
+        <h1>{title}</h1>
 
       </div>
 
       {children}
 
     </section>
+  );
+}
+
+function AdminDashboard({
+  t,
+  language,
+  attendance,
+  employees,
+  instructions,
+  setPage,
+  startNewRecord,
+}) {
+  const recentInstructions = instructions.slice(0, 4);
+
+  return (
+    <Page title={t.dashboard}>
+      <p className="dashboard-intro">
+        {language === "fa"
+          ? "نمای کلی حاضری و دستورهای دفتر."
+          : "A focused overview of office attendance and instructions."}
+      </p>
+
+      <div className="stats-grid admin-stats">
+        <Stat
+          number={attendance.length}
+          label={t.attendance}
+          code="AT"
+        />
+        <Stat
+          number={employees.length}
+          label={t.employee}
+          code="EM"
+        />
+        <Stat
+          number={instructions.length}
+          label={t.instructions}
+          code="OR"
+        />
+      </div>
+
+      <section className="dashboard-panel admin-dashboard-panel">
+        <SectionTitle title={t.instructions} />
+        {recentInstructions.length === 0 ? (
+          <Empty text={t.noData} />
+        ) : (
+          <div className="admin-instruction-list">
+            {recentInstructions.map((instruction) => (
+              <article className="admin-instruction-row" key={instruction.id}>
+                <strong>{instruction.title}</strong>
+                <span>{instruction.description || "—"}</span>
+                {instruction.created_at && (
+                  <small>{formatDisplayDate(instruction.created_at, language)}</small>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="admin-dashboard-actions">
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => startNewRecord("attendance")}
+        >
+          + {language === "fa" ? "ثبت حاضری" : "Record attendance"}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => setPage("instructions")}
+        >
+          {language === "fa" ? "مشاهده دستورها" : "View instructions"}
+        </button>
+      </div>
+    </Page>
   );
 }
 
@@ -6218,6 +8117,24 @@ function NavButton({
         {label}
       </span>
     </button>
+  );
+}
+
+function ProfileIcon() {
+  return (
+    <svg
+      className="header-account-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c.7-3.1 3.2-5 7-5s6.3 1.9 7 5" />
+    </svg>
   );
 }
 
@@ -6407,6 +8324,8 @@ function ActionButtons({
   remove,
   receipt,
   t,
+  canEdit = true,
+  canDelete = true,
 }) {
   const handleEdit = (e) => {
     e.preventDefault();
@@ -6420,20 +8339,26 @@ function ActionButtons({
     await remove();
   };
 
+  if (!canEdit && !canDelete && !receipt) {
+    return null;
+  }
+
   return (
     <div
       className="action-buttons"
       onClick={(e) => e.stopPropagation()}
     >
-      <button
-        type="button"
-        className="edit-button"
-        onClick={handleEdit}
-        onMouseDown={(e) => e.stopPropagation()}
-        aria-label={t.edit}
-      >
-        {t.edit}
-      </button>
+      {canEdit && (
+        <button
+          type="button"
+          className="edit-button"
+          onClick={handleEdit}
+          onMouseDown={(e) => e.stopPropagation()}
+          aria-label={t.edit}
+        >
+          {t.edit}
+        </button>
+      )}
 
       {receipt && (
         <button
@@ -6451,15 +8376,17 @@ function ActionButtons({
         </button>
       )}
 
-      <button
-        type="button"
-        className="delete-button"
-        onClick={handleDelete}
-        onMouseDown={(e) => e.stopPropagation()}
-        aria-label={t.delete}
-      >
-        {t.delete}
-      </button>
+      {canDelete && (
+        <button
+          type="button"
+          className="delete-button"
+          onClick={handleDelete}
+          onMouseDown={(e) => e.stopPropagation()}
+          aria-label={t.delete}
+        >
+          {t.delete}
+        </button>
+      )}
     </div>
   );
 }
@@ -11754,6 +13681,62 @@ body:has(.app.day), body:has(.login-page.day) {
 .login-page.day .login-error { color:#a92f44 !important; background:#fff0f2 !important; border:1px solid rgba(213,111,131,.54) !important; }
 @media (max-width:800px) { .app.day .content { margin:12px 10px 28px !important; padding:12px !important; border-radius:20px !important; } }
 
+.header-account-button {
+  min-height: 44px;
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1.5px solid rgba(151, 196, 239, .56) !important;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(153, 205, 255, .20), rgba(194, 172, 255, .16)) !important;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 22px rgba(40,90,145,.10);
+}
+.header-account-button:hover {
+  border-color: rgba(130, 185, 238, .85) !important;
+  background: linear-gradient(135deg, rgba(153, 205, 255, .32), rgba(194, 172, 255, .26)) !important;
+}
+.header-account-button:focus-visible {
+  outline: 3px solid #78bdf4;
+  outline-offset: 3px;
+}
+.header-account-icon {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+}
+.app.day .header-account-button {
+  color: #2e4a68 !important;
+  border-color: rgba(123, 168, 212, .65) !important;
+}
+.account-verification {
+  display: grid;
+  gap: 16px;
+}
+.account-verification h1 {
+  text-align: center;
+}
+.account-verification p {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .header-account-button {
+    min-height: 40px;
+    padding: 7px 10px;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .header-account-icon {
+    width: 19px;
+    height: 19px;
+    flex-basis: 19px;
+  }
+}
 `;
 
 export default App;
