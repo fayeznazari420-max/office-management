@@ -53,7 +53,7 @@ function getPermissions(role) {
         canManageSystemSettings: isSuperAdmin,
         canManagePersonalAccount: active,
         canManageSuperAdmin: isSuperAdmin,
-        canTakeAttendance: isSuperAdmin || isAdmin || isUser,
+        canTakeAttendance: isSuperAdmin || isAdmin,
         canIssueInstructions: isSuperAdmin || isAdmin
     };
 }
@@ -102,6 +102,21 @@ function canAccessRequest(role, method, rawPath) {
             return true;
         }
         if (
+            ["/attendance/daily", "/attendance/settings"].includes(path) &&
+            requestMethod === "GET"
+        ) {
+            return true;
+        }
+        if (path === "/attendance/daily" && requestMethod === "POST") {
+            return true;
+        }
+        if (
+            /^\/attendance\/\d+\/(check-in|check-out)$/.test(path) &&
+            requestMethod === "POST"
+        ) {
+            return true;
+        }
+        if (
             path.startsWith("/attendance/") &&
             requestMethod === "GET"
         ) {
@@ -117,6 +132,14 @@ function canAccessRequest(role, method, rawPath) {
     }
 
     if (normalizedRole !== ROLE.USER) {
+        return false;
+    }
+
+    if (
+        path === "/attendance/settings" ||
+        path === "/attendance/daily" ||
+        (path.startsWith("/attendance") && requestMethod === "POST")
+    ) {
         return false;
     }
 

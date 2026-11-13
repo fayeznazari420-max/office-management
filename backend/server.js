@@ -4,6 +4,11 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("./db");
 const {
+    createAttendanceRouter,
+    createMySqlAttendanceRepository
+} = require("./attendance");
+const { inspectAttendanceReadiness } = require("./migrate-attendance");
+const {
     ROLE,
     canAssignRole,
     canManageRecord,
@@ -275,7 +280,27 @@ function authorizeRecordRequest(req, res, next) {
         const resourcePath = req.path.replace(/\/+$/, "");
         const isCollection = resourcePath === resource.path;
         const isRead = req.method === "GET";
-        const isCreate = req.method === "POST" && isCollection;
+        const isAttendanceSettings = resource.path === "/attendance" &&
+            resourcePath === "/attendance/settings";
+        const isAttendanceTimeAction = resource.path === "/attendance" &&
+            /^\/attendance\/\d+\/(check-in|check-out)$/.test(resourcePath) &&
+            req.method === "POST";
+        if (isAttendanceSettings) {
+            if (req.method === "GET" ||
+                (req.method === "PUT" && req.user.role === ROLE.SUPER_ADMIN)) {
+                return next();
+            }
+            return res.status(403).json({
+                success: false,
+                message: "You are not allowed to manage attendance settings."
+            });
+        }
+        if (isAttendanceTimeAction) {
+            return next();
+        }
+        const isCreate = req.method === "POST" &&
+            (isCollection ||
+                (resource.path === "/attendance" && resourcePath === "/attendance/daily"));
         const isUpdate =
             req.method === "PUT" ||
             req.method === "DELETE" ||
@@ -2721,400 +2746,65 @@ app.delete(
 // ATTENDANCE
 // ======================================================
 
-app.get(
+const attendanceSchemaState = {
+    ready: false,
+    reason: "Attendance schema readiness check is pending."
+};
+let attendanceSchemaCheck = null;
+let nextAttendanceSchemaCheck = 0;
+
+function refreshAttendanceSchemaReadiness() {
+    if (attendanceSchemaState.ready) return Promise.resolve(attendanceSchemaState);
+    if (attendanceSchemaCheck) return attendanceSchemaCheck;
+    if (Date.now() < nextAttendanceSchemaCheck) {
+        return Promise.resolve(attendanceSchemaState);
+    }
+
+    nextAttendanceSchemaCheck = Date.now() + 5000;
+    attendanceSchemaCheck = inspectAttendanceReadiness(db)
+        .then((result) => {
+            attendanceSchemaState.ready = result.ready;
+            attendanceSchemaState.reason = result.message;
+            if (!result.ready) {
+                console.error(
+                    "Attendance schema migration is required:",
+                    result.message || "preflight checks did not pass."
+                );
+            }
+            return attendanceSchemaState;
+        })
+        .catch((error) => {
+            attendanceSchemaState.reason = "Attendance schema preflight failed.";
+            console.error(
+                "Attendance schema preflight failed:",
+                error.message
+            );
+            return attendanceSchemaState;
+        })
+        .finally(() => {
+            attendanceSchemaCheck = null;
+        });
+    return attendanceSchemaCheck;
+}
+
+setImmediate(() => {
+    refreshAttendanceSchemaReadiness();
+});
+
+app.use(
     "/attendance",
-    authenticateToken,
-    (
-        req,
-        res
-    ) => {
-        db.query(
-            `
-            SELECT
-                a.id,
-                a.employee_id,
-                a.user_id,
-                COALESCE(
-                    e.name,
-                    u.name
-                ) AS employee_name,
-                a.date,
-                a.check_in,
-                a.check_out,
-                a.status,
-                a.created_by,
-                a.created_by_role,
-                a.created_at
-            FROM attendance a
-            LEFT JOIN employees e
-                ON e.id =
-                    a.employee_id
-            LEFT JOIN users u
-                ON u.id =
-                    a.user_id
-            ORDER BY a.id DESC
-            `,
-            (
-                err,
-                results
-            ) => {
-                if (err) {
-                    return sendError(
-                        res,
-                        500,
-                        "Failed to fetch attendance.",
-                        err
-                    );
-                }
-
-                res.json(results);
-            }
-        );
-    }
-);
-
-app.get(
-    "/attendance/:id",
-    authenticateToken,
-    (
-        req,
-        res
-    ) => {
-        const { id } =
-            req.params;
-
-        if (
-            !isValidId(id)
-        ) {
-            return sendError(
-                res,
-                400,
-                "Invalid attendance ID."
-            );
-        }
-
-        db.query(
-            `
-            SELECT
-                a.id,
-                a.employee_id,
-                a.user_id,
-                COALESCE(
-                    e.name,
-                    u.name
-                ) AS employee_name,
-                a.date,
-                a.check_in,
-                a.check_out,
-                a.status,
-                a.created_by,
-                a.created_by_role,
-                a.created_at
-            FROM attendance a
-            LEFT JOIN employees e
-                ON e.id =
-                    a.employee_id
-            LEFT JOIN users u
-                ON u.id =
-                    a.user_id
-            WHERE a.id = ?
-            `,
-            [id],
-            (
-                err,
-                results
-            ) => {
-                if (err) {
-                    return sendError(
-                        res,
-                        500,
-                        "Failed to fetch attendance.",
-                        err
-                    );
-                }
-
-                if (
-                    results.length ===
-                    0
-                ) {
-                    return sendError(
-                        res,
-                        404,
-                        "Attendance record not found."
-                    );
-                }
-
-                res.json(
-                    results[0]
-                );
-            }
-        );
-    }
-);
-
-app.post(
-    "/attendance",
-    authenticateToken,
-    (req, res) => {
-        const {
-            employee_id,
-            date,
-            check_in,
-            check_out,
-            status
-        } = req.body;
-
-        if (
-            isEmpty(employee_id) ||
-            !isValidId(employee_id)
-        ) {
-            return sendError(
-                res,
-                400,
-                "Please select a valid employee."
-            );
-        }
-
-        if (isEmpty(date)) {
-            return sendError(
-                res,
-                400,
-                "Date is required."
-            );
-        }
-
-        db.query(
-            "SELECT id FROM employees WHERE id = ? LIMIT 1",
-            [Number(employee_id)],
-            (employeeErr, employeeRows) => {
-                if (employeeErr) {
-                    return sendError(
-                        res,
-                        500,
-                        "Failed to validate employee.",
-                        employeeErr
-                    );
-                }
-
-                if (!employeeRows || employeeRows.length === 0) {
-                    return sendError(
-                        res,
-                        400,
-                        "Selected employee does not exist."
-                    );
-                }
-
-                db.query(
-                    `INSERT INTO attendance
-                    (
-                        employee_id,
-                        user_id,
-                        date,
-                        check_in,
-                        check_out,
-                        status,
-                        created_by,
-                        created_by_role
-                    )
-                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        Number(employee_id),
-                        date,
-                        normalize(check_in),
-                        normalize(check_out),
-                        normalize(status),
-                        req.user.id,
-                        req.user.role
-                    ],
-                    (err, result) => {
-                        if (err) {
-                            return sendError(
-                                res,
-                                500,
-                                "Failed to create attendance.",
-                                err
-                            );
-                        }
-
-                        return res.status(201).json({
-                            success: true,
-                            message: "Attendance created successfully.",
-                            id: result.insertId
-                        });
-                    }
-                );
-            }
-        );
-    }
-);
-
-app.put(
-    "/attendance/:id",
-    authenticateToken,
-    (req, res) => {
-        const { id } = req.params;
-        const {
-            employee_id,
-            date,
-            check_in,
-            check_out,
-            status
-        } = req.body;
-
-        if (!isValidId(id)) {
-            return sendError(
-                res,
-                400,
-                "Invalid attendance ID."
-            );
-        }
-
-        if (
-            isEmpty(employee_id) ||
-            !isValidId(employee_id)
-        ) {
-            return sendError(
-                res,
-                400,
-                "Please select a valid employee."
-            );
-        }
-
-        if (isEmpty(date)) {
-            return sendError(
-                res,
-                400,
-                "Date is required."
-            );
-        }
-
-        db.query(
-            "SELECT id FROM employees WHERE id = ? LIMIT 1",
-            [Number(employee_id)],
-            (employeeErr, employeeRows) => {
-                if (employeeErr) {
-                    return sendError(
-                        res,
-                        500,
-                        "Failed to validate employee.",
-                        employeeErr
-                    );
-                }
-
-                if (!employeeRows || employeeRows.length === 0) {
-                    return sendError(
-                        res,
-                        400,
-                        "Selected employee does not exist."
-                    );
-                }
-
-                db.query(
-                    `UPDATE attendance
-                    SET
-                        employee_id = ?,
-                        user_id = NULL,
-                        date = ?,
-                        check_in = ?,
-                        check_out = ?,
-                        status = ?
-                    WHERE id = ?`,
-                    [
-                        Number(employee_id),
-                        date,
-                        normalize(check_in),
-                        normalize(check_out),
-                        normalize(status),
-                        id
-                    ],
-                    (err, result) => {
-                        if (err) {
-                            return sendError(
-                                res,
-                                500,
-                                "Failed to update attendance.",
-                                err
-                            );
-                        }
-
-                        if (result.affectedRows === 0) {
-                            return sendError(
-                                res,
-                                404,
-                                "Attendance record not found."
-                            );
-                        }
-
-                        return res.json({
-                            success: true,
-                            message: "Attendance updated successfully."
-                        });
-                    }
-                );
-            }
-        );
-    }
-);
-
-app.delete(
-    "/attendance/:id",
-    authenticateToken,
-    (
-        req,
-        res
-    ) => {
-        const { id } =
-            req.params;
-
-        if (
-            !isValidId(id)
-        ) {
-            return sendError(
-                res,
-                400,
-                "Invalid attendance ID."
-            );
-        }
-
-        db.query(
-            `
-            DELETE FROM attendance
-            WHERE id = ?
-            `,
-            [id],
-            (
-                err,
-                result
-            ) => {
-                if (err) {
-                    return sendError(
-                        res,
-                        500,
-                        "Failed to delete attendance.",
-                        err
-                    );
-                }
-
-                if (
-                    result.affectedRows ===
-                    0
-                ) {
-                    return sendError(
-                        res,
-                        404,
-                        "Attendance record not found."
-                    );
-                }
-
-                res.json({
-                    success:
-                        true,
-                    message:
-                        "Attendance deleted successfully."
-                });
-            }
-        );
-    }
+    async (req, res, next) => {
+        await refreshAttendanceSchemaReadiness();
+        if (attendanceSchemaState.ready) return next();
+        return res.status(503).json({
+            success: false,
+            message: "Attendance is unavailable until its schema migration and preflight checks are complete."
+        });
+    },
+    createAttendanceRouter({
+        repository: createMySqlAttendanceRepository(db),
+        authenticateToken
+    })
 );
 
 // ======================================================
@@ -6092,117 +5782,6 @@ db.query(
                             alterErr.message
                         );
                     }
-                }
-            );
-        }
-    }
-);
-
-// EMPLOYEES
-
-db.query(
-    `
-    CREATE TABLE IF NOT EXISTS employees (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        phone VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NULL,
-        position VARCHAR(255) NULL,
-        province VARCHAR(255) NULL,
-        address TEXT NULL,
-        photo LONGTEXT NULL,
-        created_by INT NULL,
-        created_by_role VARCHAR(50) NULL,
-        created_at TIMESTAMP
-            DEFAULT CURRENT_TIMESTAMP
-    )
-    ENGINE=InnoDB
-    DEFAULT CHARSET=utf8mb4
-    `,
-    (err) => {
-        if (err) {
-            console.error(
-                "Employees table error:",
-                err
-            );
-        } else {
-            console.log(
-                "Employees table ready."
-            );
-        }
-    }
-);
-
-// ATTENDANCE
-
-db.query(
-    `
-    CREATE TABLE IF NOT EXISTS attendance (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        employee_id INT NULL,
-        user_id INT NULL,
-        date DATE NOT NULL,
-        check_in VARCHAR(50) NULL,
-        check_out VARCHAR(50) NULL,
-        status VARCHAR(100) NULL,
-        created_by INT NULL,
-        created_by_role VARCHAR(50) NULL,
-        created_at TIMESTAMP
-            DEFAULT CURRENT_TIMESTAMP
-    )
-    ENGINE=InnoDB
-    DEFAULT CHARSET=utf8mb4
-    `,
-    (err) => {
-        if (err) {
-            console.error(
-                "Attendance table error:",
-                err
-            );
-        } else {
-            console.log(
-                "Attendance table ready."
-            );
-
-            db.query(
-                `
-                ALTER TABLE attendance
-                MODIFY COLUMN user_id INT NULL
-                `,
-                (
-                    modifyErr
-                ) => {
-                    if (
-                        modifyErr &&
-                        modifyErr.code !==
-                            "ER_BAD_FIELD_ERROR"
-                    ) {
-                        console.error(
-                            "Attendance user_id migration:",
-                            modifyErr.message
-                        );
-                    }
-
-                    db.query(
-                        `
-                        ALTER TABLE attendance
-                        ADD COLUMN employee_id INT NULL
-                        `,
-                        (
-                            addErr
-                        ) => {
-                            if (
-                                addErr &&
-                                addErr.code !==
-                                    "ER_DUP_FIELDNAME"
-                            ) {
-                                console.error(
-                                    "Attendance employee_id migration:",
-                                    addErr.message
-                                );
-                            }
-                        }
-                    );
                 }
             );
         }

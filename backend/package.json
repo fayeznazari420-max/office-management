@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "migrate:attendance": "node migrate-attendance.js",
     "migrate:rbac": "node migrate-rbac.js",
     "promote:super-admin": "node promote-super-admin.js"
   },

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import officeBuilding from "./office-bg.png.png";
 
 const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:5000" : "");
 
@@ -415,7 +416,6 @@ function canCreateRecordAs(user, targetPage) {
   return [
     "customers",
     "employees",
-    "attendance",
     "contracts",
     "payments",
     "projects",
@@ -432,6 +432,17 @@ function getTodayInputDate() {
   );
 
   return local.toISOString().slice(0, 10);
+}
+
+function getTodayKabulInputDate() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kabul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 const todayInputDate = getTodayInputDate();
@@ -461,10 +472,11 @@ const emptyUser = {
 
 const emptyAttendance = {
   employee_id: "",
-  date: todayInputDate,
+  date: getTodayKabulInputDate(),
   check_in: "",
   check_out: "",
   status: "Present",
+  notes: "",
 };
 
 const emptyPayment = {
@@ -533,6 +545,562 @@ const emptyContract = {
   amount: "",
   photo: "",
 };
+
+function DailyAttendanceWorkspace({
+  attendance,
+  canRecord,
+  canCorrect,
+  language,
+  api,
+  onRefresh,
+  onEdit,
+  onDelete,
+}) {
+  const [date, setDate] = useState(getTodayKabulInputDate);
+  const [register, setRegister] = useState(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [drafts, setDrafts] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [holidayInput, setHolidayInput] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const loadRequestRef = useRef(0);
+  const isPersian = language === "fa";
+  const labels = isPersian
+    ? {
+        date: "تاریخ حاضری",
+        search: "جستجوی کارمند",
+        all: "همه وضعیت‌ها",
+        present: "حاضر",
+        absent: "غایب",
+        late: "ناوقت",
+        halfDay: "نیمه‌وقت",
+        leave: "رخصتی",
+        holiday: "تعطیل",
+        notMarked: "ثبت‌نشده",
+        printTitle: "ثبت روزانه حاضری",
+        total: "مجموع کارمندان",
+        myAttendance: "حاضری من",
+        onLeave: "در رخصتی",
+        marked: "ثبت‌شده",
+        employees: "کارمند",
+        identifier: "شناسه",
+        status: "وضعیت",
+        checkIn: "ورود",
+        checkOut: "خروج",
+        duration: "مدت کار",
+        notes: "یادداشت",
+        actions: "عملیات",
+        submit: "ثبت",
+        submitAll: "ثبت همه موارد آماده",
+        checkInAction: "ثبت ورود",
+        checkOutAction: "ثبت خروج",
+        loading: "در حال بارگذاری حاضری...",
+        empty: "برای این تاریخ کارمندی موجود نیست.",
+        noMatch: "موردی با این جستجو یا فیلتر پیدا نشد.",
+        saveSuccess: "حاضری ذخیره شد.",
+        bulkSuccess: "حاضری روزانه ذخیره شد.",
+        week: "گزارش هفتگی",
+        month: "گزارش ماهانه",
+        records: "ثبت",
+        print: "چاپ گزارش روزانه",
+        correction: "اصلاح",
+        delete: "حذف",
+        history: "سوابق حاضری",
+        readOnly: "فقط مشاهده",
+        settings: "تنظیمات حاضری",
+        opening: "ساعت آغاز کار",
+        closing: "ساعت پایان کار",
+        grace: "مهلت تأخیر (دقیقه)",
+        workDays: "روزهای کاری",
+        holidays: "تاریخ‌های تعطیل (هر تاریخ در یک خط)",
+        shifts: "شیفت‌ها",
+        addShift: "افزودن شیفت",
+        shiftName: "نام شیفت",
+        saveSettings: "ذخیره تنظیمات",
+      }
+    : {
+        date: "Attendance date",
+        search: "Search employees",
+        all: "All statuses",
+        present: "Present",
+        absent: "Absent",
+        late: "Late",
+        halfDay: "Half Day",
+        leave: "On Leave",
+        holiday: "Holiday",
+        notMarked: "Not Yet Marked",
+        printTitle: "Daily attendance register",
+        total: "Total Employees",
+        myAttendance: "My attendance",
+        onLeave: "On Leave",
+        marked: "Marked",
+        employees: "Employee",
+        identifier: "Identifier",
+        status: "Status",
+        checkIn: "Check-in",
+        checkOut: "Check-out",
+        duration: "Duration",
+        notes: "Notes",
+        actions: "Actions",
+        submit: "Save",
+        submitAll: "Submit all unmarked",
+        checkInAction: "Check in",
+        checkOutAction: "Check out",
+        loading: "Loading attendance...",
+        empty: "No employees are available for this date.",
+        noMatch: "No records match this search or filter.",
+        saveSuccess: "Attendance saved.",
+        bulkSuccess: "Daily attendance saved.",
+        week: "Weekly report",
+        month: "Monthly report",
+        records: "records",
+        print: "Print daily register",
+        correction: "Correct",
+        delete: "Delete",
+        history: "Attendance history",
+        readOnly: "Read only",
+        settings: "Attendance settings",
+        opening: "Office opening time",
+        closing: "Office closing time",
+        grace: "Late grace period (minutes)",
+        workDays: "Work days",
+        holidays: "Holiday dates (one per line)",
+        shifts: "Shifts",
+        addShift: "Add shift",
+        shiftName: "Shift name",
+        saveSettings: "Save settings",
+      };
+  const statusOptions = [
+    ["Present", labels.present],
+    ["Absent", labels.absent],
+    ["Late", labels.late],
+    ["Half Day", labels.halfDay],
+    ["Leave", labels.leave],
+    ["Holiday", labels.holiday],
+  ];
+
+  const loadDaily = useCallback(async () => {
+    if (!canRecord) return;
+    const requestId = ++loadRequestRef.current;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api(`/attendance/daily?date=${encodeURIComponent(date)}`);
+      if (!result || !Array.isArray(result.employees) || !result.summary) {
+        throw new Error(isPersian ? "پاسخ سرور حاضری معتبر نیست." : "The attendance service returned an invalid register.");
+      }
+      if (requestId !== loadRequestRef.current) return;
+      setRegister(result);
+      setDrafts({});
+    } catch (loadError) {
+      if (requestId === loadRequestRef.current) {
+        setError(loadError.message || (isPersian ? "بارگذاری حاضری ناموفق بود." : "Attendance could not be loaded."));
+      }
+    } finally {
+      if (requestId === loadRequestRef.current) setLoading(false);
+    }
+  }, [api, canRecord, date, isPersian]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) loadDaily();
+    });
+    return () => {
+      active = false;
+      loadRequestRef.current += 1;
+    };
+  }, [loadDaily]);
+
+  useEffect(() => {
+    if (!canCorrect) return;
+    api("/attendance/settings")
+      .then((result) => {
+        setSettings(result);
+        setHolidayInput((result.holidays || []).join("\n"));
+      })
+      .catch((settingsError) => {
+        setError(settingsError.message || (isPersian ? "بارگذاری تنظیمات حاضری ناموفق بود." : "Attendance settings could not be loaded."));
+      });
+  }, [api, canCorrect, isPersian]);
+
+  const entries = canRecord && register
+    ? register.employees.map((employee) => ({
+        ...employee,
+        attendance: employee.attendance || null,
+      }))
+    : [];
+  const recordedForDate = attendance.filter((item) => String(item.date || "").slice(0, 10) === date);
+  const summary = register?.summary || {
+    total_employees: entries.length,
+    present: 0,
+    absent: 0,
+    late: 0,
+    half_day: 0,
+    on_leave: 0,
+    not_marked: 0,
+  };
+  const summaryAvailable = !canRecord || Boolean(register);
+  const statusLabel = (value) => ({
+    Present: labels.present,
+    Absent: labels.absent,
+    Late: labels.late,
+    "Half Day": labels.halfDay,
+    Leave: labels.leave,
+    Holiday: labels.holiday,
+  }[value] || value || labels.notMarked);
+  const makeDraft = (employee) => drafts[String(employee.id)] || {
+    status: "Present",
+    check_in: "",
+    check_out: "",
+    notes: "",
+  };
+  const shownEntries = entries.filter((employee) => {
+    const record = employee.attendance;
+    const query = search.trim().toLocaleLowerCase();
+    const employeeMatch = !query ||
+      String(employee.name || "").toLocaleLowerCase().includes(query) ||
+      String(employee.employee_id || employee.id || "").toLocaleLowerCase().includes(query);
+    const statusMatch = statusFilter === "all" ||
+      (statusFilter === "Not Marked" ? !record : record?.status === statusFilter);
+    return employeeMatch && statusMatch;
+  });
+  const dayMilliseconds = Date.parse(`${date}T00:00:00Z`);
+  const weekStart = dayMilliseconds - new Date(dayMilliseconds).getUTCDay() * 86400000;
+  const weekEnd = weekStart + 7 * 86400000;
+  const monthDate = new Date(dayMilliseconds);
+  const monthStart = Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1);
+  const nextMonthStart = Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 1);
+  const rangeSummary = (start, end) => {
+    const records = attendance.filter((item) => {
+      const timestamp = Date.parse(`${String(item.date || "").slice(0, 10)}T00:00:00Z`);
+      return Number.isFinite(timestamp) && timestamp >= start && timestamp < end;
+    });
+    return {
+      total: records.length,
+      present: records.filter((item) => item.status === "Present").length,
+      absent: records.filter((item) => item.status === "Absent").length,
+      late: records.filter((item) => item.status === "Late").length,
+    };
+  };
+  const weeklySummary = rangeSummary(weekStart, weekEnd);
+  const monthlySummary = rangeSummary(monthStart, nextMonthStart);
+  const reportSummaryText = (result) => isPersian
+    ? `${result.total} ${labels.records} · ${labels.present}: ${result.present} · ${labels.absent}: ${result.absent}`
+    : `${result.total} ${labels.records} · ${result.present} ${labels.present.toLowerCase()} · ${result.absent} ${labels.absent.toLowerCase()}`;
+  const isSelectedDateToday = date === getTodayKabulInputDate();
+  const canSubmitSelectedDate = canCorrect || isSelectedDateToday;
+  const workingDuration = (checkIn, checkOut) => {
+    if (!checkIn || !checkOut) return "—";
+    const toMinutes = (time) => {
+      const match = String(time).match(/^(\d{1,2}):(\d{2})/);
+      return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
+    };
+    const minutes = toMinutes(checkOut) - toMinutes(checkIn);
+    return Number.isFinite(minutes) && minutes >= 0
+      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+      : "—";
+  };
+  const formatDate = (value) => {
+    const parsed = new Date(`${value}T12:00:00Z`);
+    return Number.isNaN(parsed.getTime())
+      ? value
+      : parsed.toLocaleDateString(isPersian ? "fa-AF" : "en-US", {
+          timeZone: "UTC",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+  };
+  const updateDraft = (id, key, value) => {
+    setDrafts((current) => ({
+      ...current,
+      [String(id)]: { ...makeDraft({ id }), ...current[String(id)], [key]: value },
+    }));
+  };
+
+  async function saveEntries(selectedEmployees, successMessage) {
+    if (!selectedEmployees.length || saving) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api("/attendance/daily", {
+        method: "POST",
+        body: JSON.stringify({
+          date,
+          entries: selectedEmployees.map((employee) => ({
+            employee_id: employee.id,
+            ...makeDraft(employee),
+          })),
+        }),
+      });
+      setNotice(successMessage);
+      await Promise.all([loadDaily(), onRefresh()]);
+    } catch (saveError) {
+      setError(saveError.message || (isPersian ? "ثبت حاضری ناموفق بود." : "Attendance could not be saved."));
+      await loadDaily();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function recordTime(record, action) {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/attendance/${record.id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setNotice(isPersian ? "زمان حاضری ثبت شد." : "Attendance time recorded.");
+      await Promise.all([loadDaily(), onRefresh()]);
+    } catch (timeError) {
+      setError(timeError.message || (isPersian ? "ثبت زمان ناموفق بود." : "Attendance time could not be recorded."));
+      await loadDaily();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAttendanceSettings(event) {
+    event.preventDefault();
+    if (!settings || settingsSaving) return;
+    setSettingsSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await api("/attendance/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          office_open: settings.office_open || null,
+          office_close: settings.office_close || null,
+          grace_period_minutes: Number(settings.grace_period_minutes || 0),
+          work_days: settings.work_days || [],
+          holidays: holidayInput.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+          shifts: settings.shifts || [],
+        }),
+      });
+      setSettings(saved);
+      setHolidayInput((saved.holidays || []).join("\n"));
+      setNotice(isPersian ? "تنظیمات ذخیره شد." : "Attendance settings saved.");
+      await loadDaily();
+    } catch (settingsError) {
+      setError(settingsError.message || (isPersian ? "ذخیره تنظیمات ناموفق بود." : "Attendance settings could not be saved."));
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
+  const updateSettings = (key, value) => setSettings((current) => ({ ...current, [key]: value }));
+  const weekdays = isPersian
+    ? [[1, "دوشنبه"], [2, "سه‌شنبه"], [3, "چهارشنبه"], [4, "پنجشنبه"], [5, "جمعه"], [6, "شنبه"], [7, "یکشنبه"]]
+    : [[1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"], [7, "Sunday"]];
+
+  const setRecordDraft = (employee, key, value) => updateDraft(employee.id, key, value);
+
+  return (
+    <section className="daily-attendance" dir={isPersian ? "rtl" : "ltr"}>
+      <div className="daily-attendance-toolbar">
+        <label className="daily-attendance-date">
+          <span>{labels.date}</span>
+          <input
+            type="date"
+            value={date}
+            max={canRecord && !canCorrect ? getTodayKabulInputDate() : undefined}
+            onChange={(event) => setDate(event.target.value)}
+          />
+        </label>
+        <div className="daily-attendance-toolbar-actions">
+          {canRecord && canSubmitSelectedDate && (
+            <button type="button" className="primary-button" disabled={saving || loading} onClick={() => saveEntries(entries.filter((employee) => !employee.attendance), labels.bulkSuccess)}>
+              {labels.submitAll}
+            </button>
+          )}
+          <button type="button" className="secondary-button" onClick={() => window.print()}>{labels.print}</button>
+        </div>
+      </div>
+
+      {canCorrect && (
+        <div className="daily-attendance-settings">
+          <button type="button" className="secondary-button" onClick={() => setSettingsOpen((open) => !open)}>
+            {labels.settings}
+          </button>
+          {settingsOpen && (
+            <form className="daily-attendance-settings-form" onSubmit={saveAttendanceSettings}>
+              {!settings ? <div className="daily-attendance-state">{labels.loading}</div> : (
+                <>
+                  <label><span>{labels.opening}</span><input type="time" value={settings.office_open || ""} onChange={(event) => updateSettings("office_open", event.target.value || null)} /></label>
+                  <label><span>{labels.closing}</span><input type="time" value={settings.office_close || ""} onChange={(event) => updateSettings("office_close", event.target.value || null)} /></label>
+                  <label><span>{labels.grace}</span><input type="number" min="0" max="360" value={settings.grace_period_minutes ?? 0} onChange={(event) => updateSettings("grace_period_minutes", Number(event.target.value))} /></label>
+                  <fieldset>
+                    <legend>{labels.workDays}</legend>
+                    <div className="daily-attendance-weekdays">
+                      {weekdays.map(([day, label]) => (
+                        <label key={day}>
+                          <input
+                            type="checkbox"
+                            checked={(settings.work_days || []).includes(day)}
+                            onChange={(event) => updateSettings("work_days", event.target.checked
+                              ? [...(settings.work_days || []), day].sort((a, b) => a - b)
+                              : (settings.work_days || []).filter((item) => item !== day))}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <label className="daily-attendance-holidays"><span>{labels.holidays}</span><textarea rows="4" value={holidayInput} onChange={(event) => setHolidayInput(event.target.value)} placeholder="YYYY-MM-DD" /></label>
+                  <fieldset className="daily-attendance-shifts">
+                    <legend>{labels.shifts}</legend>
+                    {(settings.shifts || []).map((shift, index) => (
+                      <div className="daily-attendance-shift" key={`${shift.name}-${index}`}>
+                        <input aria-label={labels.shiftName} value={shift.name} onChange={(event) => updateSettings("shifts", settings.shifts.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />
+                        <input aria-label={labels.opening} type="time" value={shift.start} onChange={(event) => updateSettings("shifts", settings.shifts.map((item, itemIndex) => itemIndex === index ? { ...item, start: event.target.value } : item))} />
+                        <input aria-label={labels.closing} type="time" value={shift.end} onChange={(event) => updateSettings("shifts", settings.shifts.map((item, itemIndex) => itemIndex === index ? { ...item, end: event.target.value } : item))} />
+                        <input aria-label={labels.grace} type="number" min="0" max="360" value={shift.grace_period_minutes || 0} onChange={(event) => updateSettings("shifts", settings.shifts.map((item, itemIndex) => itemIndex === index ? { ...item, grace_period_minutes: Number(event.target.value) } : item))} />
+                        <button type="button" className="danger-button" onClick={() => updateSettings("shifts", settings.shifts.filter((_, itemIndex) => itemIndex !== index))}>{labels.delete}</button>
+                      </div>
+                    ))}
+                    <button type="button" className="secondary-button" onClick={() => updateSettings("shifts", [...(settings.shifts || []), { name: "", start: settings.office_open || "09:00", end: settings.office_close || "17:00", grace_period_minutes: 0 }])}>{labels.addShift}</button>
+                  </fieldset>
+                  <button type="submit" className="primary-button" disabled={settingsSaving}>{settingsSaving ? labels.loading : labels.saveSettings}</button>
+                </>
+              )}
+            </form>
+          )}
+        </div>
+      )}
+
+      <div className="daily-attendance-summary">
+        {[
+          [canRecord ? labels.total : labels.myAttendance, canRecord ? summary.total_employees : recordedForDate.length, "navy"],
+          [labels.present, canRecord ? summary.present : recordedForDate.filter((row) => row.status === "Present").length, "green"],
+          [labels.absent, canRecord ? summary.absent : recordedForDate.filter((row) => row.status === "Absent").length, "orange"],
+          [labels.late, canRecord ? summary.late : recordedForDate.filter((row) => row.status === "Late").length, "blue"],
+          [labels.halfDay, canRecord ? summary.half_day : recordedForDate.filter((row) => row.status === "Half Day").length, "purple"],
+          [labels.onLeave, canRecord ? summary.on_leave : recordedForDate.filter((row) => row.status === "Leave").length, "teal"],
+          [labels.holiday, canRecord ? summary.holiday : recordedForDate.filter((row) => row.status === "Holiday").length, "blue"],
+          [labels.notMarked, canRecord ? summary.not_marked : 0, "gray"],
+        ].map(([label, value, tone]) => (
+          <article className={`daily-attendance-stat tone-${tone}`} key={label}>
+            <span>{label}</span>
+            <strong>{summaryAvailable ? value : "—"}</strong>
+          </article>
+        ))}
+      </div>
+
+      <div className="daily-attendance-reports">
+        <article><span>{labels.week}</span><strong>{reportSummaryText(weeklySummary)}</strong></article>
+        <article><span>{labels.month}</span><strong>{reportSummaryText(monthlySummary)}</strong></article>
+      </div>
+
+      {error && <div className="daily-attendance-message is-error" role="alert">{error}</div>}
+      {notice && <div className="daily-attendance-message is-success" role="status">{notice}</div>}
+
+      {canRecord ? (
+        <>
+          <h2 className="daily-attendance-print-title">{labels.printTitle} · {formatDate(date)}</h2>
+          <div className="daily-attendance-filters">
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={labels.search}
+              aria-label={labels.search}
+            />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label={labels.status}>
+              <option value="all">{labels.all}</option>
+              <option value="Not Marked">{labels.notMarked}</option>
+              {statusOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+            </select>
+          </div>
+          {loading && <div className="daily-attendance-state" role="status">{labels.loading}</div>}
+          {!loading && entries.length === 0 && <div className="daily-attendance-state">{labels.empty}</div>}
+          {!loading && entries.length > 0 && shownEntries.length === 0 && <div className="daily-attendance-state">{labels.noMatch}</div>}
+          {!loading && shownEntries.length > 0 && (
+            <div className="daily-attendance-table-wrap">
+              <table className="daily-attendance-table">
+                <thead><tr>
+                  <th>{labels.employees}</th><th>{labels.identifier}</th><th>{labels.status}</th>
+                  <th>{labels.checkIn}</th><th>{labels.checkOut}</th><th>{labels.duration}</th>
+                  <th>{labels.notes}</th><th>{labels.actions}</th>
+                </tr></thead>
+                <tbody>
+                  {shownEntries.map((employee) => {
+                    const record = employee.attendance;
+                    const draft = makeDraft(employee);
+                    return (
+                      <tr key={employee.id}>
+                        <td data-label={labels.employees}>{employee.name || "—"}</td>
+                        <td data-label={labels.identifier}>{employee.employee_number || employee.employee_code || employee.id || "—"}</td>
+                        <td data-label={labels.status}>
+                          {record ? <span className={`attendance-status status-${String(record.status || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>{statusLabel(record.status)}</span> : <span className="attendance-status status-not-marked">{labels.notMarked}</span>}
+                        </td>
+                        <td data-label={labels.checkIn}>
+                          {record || !canSubmitSelectedDate ? record?.check_in || "—" : <input type="time" value={draft.check_in} onChange={(event) => setRecordDraft(employee, "check_in", event.target.value)} aria-label={`${labels.checkIn}: ${employee.name}`} />}
+                        </td>
+                        <td data-label={labels.checkOut}>
+                          {record || !canSubmitSelectedDate ? record?.check_out || "—" : <input type="time" value={draft.check_out} onChange={(event) => setRecordDraft(employee, "check_out", event.target.value)} aria-label={`${labels.checkOut}: ${employee.name}`} />}
+                        </td>
+                        <td data-label={labels.duration}>{workingDuration(record?.check_in || draft.check_in, record?.check_out || draft.check_out)}</td>
+                        <td data-label={labels.notes}>{record || !canSubmitSelectedDate ? record?.notes || "—" : <input type="text" value={draft.notes} onChange={(event) => setRecordDraft(employee, "notes", event.target.value)} aria-label={`${labels.notes}: ${employee.name}`} />}</td>
+                        <td data-label={labels.actions} className="daily-attendance-actions">
+                          {!record ? (
+                            canSubmitSelectedDate ? <>
+                              <select value={draft.status} onChange={(event) => setRecordDraft(employee, "status", event.target.value)} aria-label={`${labels.status}: ${employee.name}`}>
+                                {statusOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                              </select>
+                              <button type="button" className="primary-button" disabled={saving} onClick={() => saveEntries([employee], labels.saveSuccess)}>{labels.submit}</button>
+                            </> : <span>{labels.readOnly}</span>
+                          ) : (
+                            <>
+                              {canRecord && (canCorrect || isSelectedDateToday) && !record.check_in && <button type="button" className="secondary-button" disabled={saving} onClick={() => recordTime(record, "check-in")}>{labels.checkInAction}</button>}
+                              {canRecord && (canCorrect || isSelectedDateToday) && !record.check_out && <button type="button" className="secondary-button" disabled={saving} onClick={() => recordTime(record, "check-out")}>{labels.checkOutAction}</button>}
+                              {canCorrect && <button type="button" className="secondary-button" onClick={() => onEdit(record)}>{labels.correction}</button>}
+                              {canCorrect && <button type="button" className="danger-button" onClick={() => onDelete(record.id)}>{labels.delete}</button>}
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      ) : (
+        <section className="daily-attendance-history">
+          <h2>{labels.history} · {formatDate(date)}</h2>
+          {recordedForDate.length === 0 ? <div className="daily-attendance-state">{labels.noMatch}</div> : (
+            <div className="daily-attendance-table-wrap">
+              <table className="daily-attendance-table">
+                <thead><tr><th>{labels.employees}</th><th>{labels.status}</th><th>{labels.checkIn}</th><th>{labels.checkOut}</th></tr></thead>
+                <tbody>{recordedForDate.map((record) => (
+                  <tr key={record.id}>
+                    <td data-label={labels.employees}>{record.employee_name || labels.employees}</td>
+                    <td data-label={labels.status}><span className={`attendance-status status-${String(record.status || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>{statusLabel(record.status)}</span></td>
+                    <td data-label={labels.checkIn}>{record.check_in || "—"}</td>
+                    <td data-label={labels.checkOut}>{record.check_out || "—"}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+    </section>
+  );
+}
 
 /* ================= APP ================= */
 
@@ -1624,7 +2192,7 @@ function App() {
     if (targetPage === "attendance") {
       setAttendanceForm({
         ...emptyAttendance,
-        date: getTodayInputDate(),
+        date: getTodayKabulInputDate(),
       });
     }
 
@@ -1934,6 +2502,7 @@ function App() {
       check_in: attendanceForm.check_in || null,
       check_out: attendanceForm.check_out || null,
       status: attendanceForm.status || "Present",
+      notes: attendanceForm.notes || null,
     };
 
     try {
@@ -1953,7 +2522,7 @@ function App() {
 
       setAttendanceForm({
         ...emptyAttendance,
-        date: getTodayInputDate(),
+        date: getTodayKabulInputDate(),
       });
       setEditingAttendance(null);
       setRecordFormOpen(false);
@@ -1979,6 +2548,7 @@ function App() {
     check_in: item.check_in || "",
     check_out: item.check_out || "",
     status: item.status || "Present",
+    notes: item.notes || "",
   });
 
   setRecordFormOpen(true);
@@ -2846,6 +3416,44 @@ function App() {
     );
   }
 
+  function renderPageTools(targetPage) {
+    const supportedPages = [
+      "customers",
+      "employees",
+      "users",
+      "attendance",
+      "payments",
+      "income",
+      "expenses",
+      "debts",
+      "projects",
+      "contracts",
+    ];
+
+    if (
+      page !== targetPage ||
+      recordFormOpen ||
+      !supportedPages.includes(targetPage) ||
+      (targetPage === "users" && !canManageAccountsAs(currentUser))
+    ) {
+      return null;
+    }
+
+    return (
+      <PageTools
+        t={t}
+        language={language}
+        page={targetPage}
+        search={search}
+        setSearch={setSearch}
+        onCreate={() => startNewRecord(targetPage)}
+        onPrint={() => printVisibleTable(targetPage)}
+        onExcel={() => downloadExcelBackup(targetPage)}
+        showExcel={!isAdminRole(currentUser?.role)}
+      />
+    );
+  }
+
   /* ================= LOGIN PAGE ================= */
 
   if (loggedIn && !accountVerified) {
@@ -2892,7 +3500,58 @@ function App() {
       <>
         <style>{styles}</style>
 
-        <div className={`login-page ${theme}`}>
+        <div
+          className={`login-page ${theme} ${language === "fa" ? "rtl" : ""}`}
+          dir={language === "fa" ? "rtl" : "ltr"}
+        >
+          <div
+            className="login-layout"
+            style={{ "--office-image": `url("${officeBuilding}")` }}
+          >
+            <section className="login-showcase">
+              <div className="showcase-brand">
+                <span className="showcase-logo">OM</span>
+                <span>
+                  <strong>OFFICE</strong>
+                  <small>MANAGEMENT</small>
+                </span>
+              </div>
+              <div className="showcase-copy">
+                <span className="showcase-kicker">
+                  {language === "fa" ? "محیط کار هوشمند" : "SMARTER WORKPLACE"}
+                </span>
+                <h2>
+                  {language === "fa"
+                    ? "مدیریت دفتر، ساده و یکپارچه"
+                    : "A clearer way to manage your office"}
+                </h2>
+                <p>
+                  {language === "fa"
+                    ? "مشتریان، تیم و امور روزانه خود را در یک فضای کاری امن مدیریت کنید."
+                    : "Bring your team, customers and daily operations together in one secure workspace."}
+                </p>
+                <ul>
+                  <li>
+                    <span aria-hidden="true">✓</span>
+                    {language === "fa" ? "مدیریت مشتریان و پروژه‌ها" : "Customer and project management"}
+                  </li>
+                  <li>
+                    <span aria-hidden="true">✓</span>
+                    {language === "fa" ? "حاضری و مدیریت کارمندان" : "Employee and attendance management"}
+                  </li>
+                  <li>
+                    <span aria-hidden="true">✓</span>
+                    {language === "fa" ? "گزارش‌ها و امور مالی" : "Finance and business insights"}
+                  </li>
+                </ul>
+              </div>
+              <div className="showcase-caption">
+                {language === "fa"
+                  ? "فضای کاری یکپارچه برای تیم شما"
+                  : "One connected workspace for your team"}
+              </div>
+            </section>
+
           <div className="login-box">
 
             <div className="login-logo">
@@ -3224,6 +3883,7 @@ function App() {
               </button>
             </div>
 
+          </div>
           </div>
         </div>
       </>
@@ -4836,14 +5496,12 @@ function App() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    startNewRecord("attendance")
-                  }
+                  onClick={() => showListPage("attendance")}
                 >
                   ＋{" "}
                   {language === "fa"
-                    ? "ثبت حاضری جدید"
-                    : "NEW ATTENDANCE"}
+                    ? "ثبت روزانه"
+                    : "DAILY REGISTER"}
                 </button>
               </div>
             )}
@@ -5199,36 +5857,6 @@ function App() {
 
           </header>
 
-          {/* PAGE TOOLS */}
-
-          {[
-            "customers",
-            "employees",
-            "users",
-            "attendance",
-            "payments",
-            "income",
-            "expenses",
-            "debts",
-            "projects",
-            "contracts",
-          ].includes(page) &&
-          (page !== "users" || canManageAccountsAs(currentUser)) &&
-          !recordFormOpen && (
-            <PageTools
-              t={t}
-              language={language}
-              search={search}
-              setSearch={setSearch}
-              onCreate={() =>
-                startNewRecord(page)
-              }
-              onPrint={() => printVisibleTable(page)}
-              onExcel={() => downloadExcelBackup(page)}
-              showExcel={!isAdminRole(currentUser?.role)}
-            />
-          )}
-
           {/* DASHBOARD */}
 
           {page === "dashboard" && isAdminRole(currentUser?.role) && (
@@ -5247,8 +5875,8 @@ function App() {
             <Dashboard
               t={t}
               customers={customers}
-              users={users}
-              showUserStats={canManageAccountsAs(currentUser)}
+              employees={employees}
+              showUserManagementAction={canManageAccountsAs(currentUser)}
               attendance={attendance}
               payments={payments}
               projects={projects}
@@ -5277,7 +5905,12 @@ function App() {
           {/* CUSTOMERS */}
 
           {page === "customers" && (
-            <Page title={t.customers}>
+            <Page
+              title={t.customers}
+              pageKey="customers"
+              description={language === "fa" ? "فهرست و اطلاعات مشتریان دفتر." : "Manage customer records and contact details."}
+              toolbar={renderPageTools("customers")}
+            >
 
               {recordFormOpen && (
                 <FormCard
@@ -5305,93 +5938,60 @@ function App() {
 
                   <form
                     onSubmit={saveCustomer}
-                    className="form-grid"
+                    className="form-layout"
                   >
-                    <PhotoInput
-                      label={language === "fa" ? "عکس مشتری" : "CUSTOMER PHOTO"}
-                      value={customerForm.photo}
-                      onChange={(photo) =>
-                        setCustomerForm({ ...customerForm, photo })
-                      }
-                    />
+                    <div className="form-section">
+                      <SectionTitle title={language === "fa" ? "اطلاعات مشتری" : "CUSTOMER DETAILS"} />
+                      <div className="form-grid">
+                        <PhotoInput
+                          label={language === "fa" ? "عکس مشتری" : "CUSTOMER PHOTO"}
+                          value={customerForm.photo}
+                          onChange={(photo) => setCustomerForm({ ...customerForm, photo })}
+                        />
+                        <Input
+                          label={t.name}
+                          value={customerForm.name}
+                          onChange={(value) => setCustomerForm({ ...customerForm, name: value })}
+                          required
+                        />
+                        <Input
+                          label={t.phone}
+                          value={customerForm.phone}
+                          onChange={(value) => setCustomerForm({ ...customerForm, phone: value })}
+                        />
+                      </div>
+                    </div>
 
-                    <Input
-                      label={t.name}
-                      value={customerForm.name}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          name: value,
-                        })
-                      }
-                      required
-                    />
-
-                    <Input
-                      label={t.phone}
-                      value={customerForm.phone}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          phone: value,
-                        })
-                      }
-                    />
-
-                    <Input
-                      label={t.shopName}
-                      value={customerForm.shop_name}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          shop_name: value,
-                        })
-                      }
-                    />
-
-                    <Input
-                      label={t.shopNumber}
-                      value={customerForm.shop_number}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          shop_number: value,
-                        })
-                      }
-                    />
-
-                    <Input
-                      label={t.address}
-                      value={customerForm.address}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          address: value,
-                        })
-                      }
-                    />
-
-                    <Input
-                      label={t.contractId}
-                      value={customerForm.contract_id}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          contract_id: value,
-                        })
-                      }
-                    />
-
-                    <Input
-                      label={t.dateId}
-                      value={customerForm.date_id}
-                      onChange={(value) =>
-                        setCustomerForm({
-                          ...customerForm,
-                          date_id: value,
-                        })
-                      }
-                    />
+                    <div className="form-section">
+                      <SectionTitle title={language === "fa" ? "اطلاعات دوکان و قرارداد" : "SHOP & CONTRACT DETAILS"} />
+                      <div className="form-grid">
+                        <Input
+                          label={t.shopName}
+                          value={customerForm.shop_name}
+                          onChange={(value) => setCustomerForm({ ...customerForm, shop_name: value })}
+                        />
+                        <Input
+                          label={t.shopNumber}
+                          value={customerForm.shop_number}
+                          onChange={(value) => setCustomerForm({ ...customerForm, shop_number: value })}
+                        />
+                        <Input
+                          label={t.address}
+                          value={customerForm.address}
+                          onChange={(value) => setCustomerForm({ ...customerForm, address: value })}
+                        />
+                        <Input
+                          label={t.contractId}
+                          value={customerForm.contract_id}
+                          onChange={(value) => setCustomerForm({ ...customerForm, contract_id: value })}
+                        />
+                        <Input
+                          label={t.dateId}
+                          value={customerForm.date_id}
+                          onChange={(value) => setCustomerForm({ ...customerForm, date_id: value })}
+                        />
+                      </div>
+                    </div>
 
                     <FormButtons
                       editing={editingCustomer}
@@ -5408,14 +6008,21 @@ function App() {
 
               {!recordFormOpen && (
                 <>
-                  <SectionTitle title={t.customers} />
+                  <ModuleOverview
+                    items={[
+                      { label: t.customers, value: customers.length, tone: "blue" },
+                      { label: language === "fa" ? "نمایش داده‌شده" : "Showing", value: getCustomerRows(customers).length, tone: "teal" },
+                      { label: t.contractId, value: customers.filter((customer) => customer.contract_id).length, tone: "purple" },
+                      { label: language === "fa" ? "دارای عکس" : "With photo", value: customers.filter((customer) => customer.photo || getStoredPhoto("customer", customer.id)).length, tone: "orange" },
+                    ]}
+                  />
 
                   {getCustomerRows(customers).length === 0 ? (
                     <Empty text={t.noData} />
                   ) : (
                     <Table
                       headers={[
-                        "#",
+                        language === "fa" ? "شناسه" : "ID",
                         t.name,
                         t.phone,
                         t.shopName,
@@ -5427,9 +6034,9 @@ function App() {
                       ]}
                     >
                       {getCustomerRows(customers).map(
-                        ({ item, serial }) => (
+                        ({ item }) => (
                           <tr key={item.id}>
-                            <td>{serial}</td>
+                            <td>{item.id}</td>
                             <td>{item.name}</td>
                             <td>{item.phone}</td>
                             <td>{item.shop_name}</td>
@@ -5461,7 +6068,19 @@ function App() {
           {/* EMPLOYEES */}
 
           {page === "employees" && (
-            <Page title={language === "fa" ? "کارمندان" : "EMPLOYEES"}>
+            <Page
+              title={language === "fa" ? "کارمندان" : "EMPLOYEES"}
+              pageKey="employees"
+              description={language === "fa" ? "مدیریت اطلاعات و فهرست کارمندان." : "Manage employee profiles and contact information."}
+              toolbar={renderPageTools("employees")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "کارمندان" : "Employees", value: employees.length, tone: "blue" },
+                  { label: language === "fa" ? "دارای سمت" : "With position", value: employees.filter((employee) => employee.position).length, tone: "teal" },
+                  { label: language === "fa" ? "دارای ایمیل" : "With email", value: employees.filter((employee) => employee.email).length, tone: "purple" },
+                ]} />
+              )}
               {recordFormOpen && (
                 <FormCard
                   title={editingEmployee ? t.edit : (language === "fa" ? "کارمند جدید" : "NEW EMPLOYEE")}
@@ -5525,7 +6144,19 @@ function App() {
           {/* CONTRACTS */}
 
           {page === "contracts" && (
-            <Page title={language === "fa" ? "قراردادها" : "CONTRACTS"}>
+            <Page
+              title={language === "fa" ? "قراردادها" : "CONTRACTS"}
+              pageKey="contracts"
+              description={language === "fa" ? "مدیریت قراردادها و وضعیت اعتبار آن‌ها." : "Track contract details, dates, and current status."}
+              toolbar={renderPageTools("contracts")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "تمام قراردادها" : "All contracts", value: contracts.length, tone: "blue" },
+                  { label: language === "fa" ? "فعال" : "Active", value: contracts.filter((item) => contractStatus(item.contract_end).className !== "expired" && contractStatus(item.contract_end).className !== "").length, tone: "teal" },
+                  { label: language === "fa" ? "منقضی" : "Expired", value: contracts.filter((item) => contractStatus(item.contract_end).className === "expired").length, tone: "orange" },
+                ]} />
+              )}
               {recordFormOpen && (
                 <FormCard
                   title={editingContract ? t.edit : (language === "fa" ? "قرارداد جدید" : "NEW CONTRACT")}
@@ -5600,7 +6231,19 @@ function App() {
           {/* USERS */}
 
           {page === "users" && canManageAccountsAs(currentUser) && (
-            <Page title={t.users}>
+            <Page
+              title={t.users}
+              pageKey="users"
+              description={language === "fa" ? "مدیریت حساب‌ها و نقش‌های دسترسی." : "Manage user accounts, roles, and access status."}
+              toolbar={renderPageTools("users")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "تمام حساب‌ها" : "All accounts", value: users.length, tone: "blue" },
+                  { label: t.active, value: users.filter((item) => Number(item.is_active) === 1).length, tone: "teal" },
+                  { label: language === "fa" ? "مدیران" : "Admins", value: users.filter((item) => isAdminRole(item.role) || isSuperAdminRole(item.role)).length, tone: "purple" },
+                ]} />
+              )}
 
               {recordFormOpen && (
                 <FormCard
@@ -5802,11 +6445,21 @@ function App() {
                             <td>{item.name}</td>
                             <td>{item.email}</td>
                             <td>{item.username}</td>
-                            <td>{item.role || "user"}</td>
                             <td>
-                              {Number(item.is_active) === 1
-                                ? t.active
-                                : t.disabled}
+                              <span className={`user-role-badge role-${String(item.role || "user").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
+                                {isSuperAdminRole(item.role)
+                                  ? language === "fa" ? "سوپر ادمین" : "Super Admin"
+                                  : isAdminRole(item.role)
+                                    ? language === "fa" ? "مدیر" : "Admin"
+                                      : normalizeRoleValue(item.role) === "user"
+                                        ? language === "fa" ? "کاربر" : "User"
+                                        : item.role || (language === "fa" ? "کاربر" : "User")}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`account-status ${Number(item.is_active) === 1 ? "is-active" : "is-disabled"}`}>
+                                {Number(item.is_active) === 1 ? t.active : t.disabled}
+                              </span>
                             </td>
                             <td><AvatarPhoto src={item.photo || getStoredPhoto("user", item.id)} /></td>
                             <td>
@@ -5833,9 +6486,13 @@ function App() {
           {/* ATTENDANCE */}
 
           {page === "attendance" && (
-            <Page title={t.attendance}>
-
-              {recordFormOpen && (
+            <Page
+              title={t.attendance}
+              pageKey="attendance"
+              description={language === "fa" ? "مرور و ثبت حاضری کارمندان." : "Review employee attendance and record daily status."}
+              toolbar={null}
+            >
+              {recordFormOpen && editingAttendance && (
                 <FormCard
                   title={
                     editingAttendance
@@ -5851,7 +6508,7 @@ function App() {
                       setEditingAttendance(null);
                       setAttendanceForm({
                         ...emptyAttendance,
-                        date: getTodayInputDate(),
+                        date: getTodayKabulInputDate(),
                       });
                     }}
                     style={{ marginBottom: "20px" }}
@@ -5950,9 +6607,19 @@ function App() {
                     >
                       <option value="Present">Present</option>
                       <option value="Absent">Absent</option>
-                      <option value="holiday">Holiday</option>
                       <option value="Late">Late</option>
+                      <option value="Half Day">Half Day</option>
+                      <option value="Leave">Leave</option>
+                      <option value="Holiday">Holiday</option>
                     </Select>
+
+                    <Input
+                      label={language === "fa" ? "یادداشت" : "Notes"}
+                      value={attendanceForm.notes}
+                      onChange={(value) =>
+                        setAttendanceForm({ ...attendanceForm, notes: value })
+                      }
+                    />
 
                     <FormButtons
                       editing={editingAttendance}
@@ -5961,7 +6628,7 @@ function App() {
                         setEditingAttendance(null);
                         setAttendanceForm({
                           ...emptyAttendance,
-                          date: getTodayInputDate(),
+                          date: getTodayKabulInputDate(),
                         });
                         setRecordFormOpen(false);
                       }}
@@ -5970,60 +6637,17 @@ function App() {
                 </FormCard>
               )}
 
-              {!recordFormOpen && (
-                <>
-                  <SectionTitle title={t.attendance} />
-
-                  {searchItems(attendance).length === 0 ? (
-                    <Empty text={t.noData} />
-                  ) : (
-                    <Table
-                      headers={[
-                        "#",
-                        t.employee,
-                        t.date,
-                        t.checkIn,
-                        t.checkOut,
-                        t.status,
-                        t.action,
-                      ]}
-                    >
-                      {getNumberedRows(attendance).map(
-                        ({ item, serial }) => (
-                          <tr key={item.id}>
-                            <td>{serial}</td>
-                            <td>
-                              {item.employee_name ||
-                                employees.find((employee) =>
-                                  String(employee.id) === String(item.employee_id)
-                                )?.name || "—"}
-                            </td>
-                            <td>
-                              {formatDisplayDate(
-                                item.date,
-                                language
-                              )}
-                            </td>
-                            <td>{item.check_in || "-"}</td>
-                            <td>{item.check_out || "-"}</td>
-                            <td>
-                              <Status value={item.status} />
-                            </td>
-                            <td>
-                              <ActionButtons
-                                edit={() => editAttendance(item)}
-                                remove={() => deleteAttendance(item.id)}
-                                canEdit={canManageRecordsAs(currentUser, item)}
-                                canDelete={canManageRecordsAs(currentUser, item)}
-                                t={t}
-                              />
-                            </td>
-                          </tr>
-                        )
-                      )}
-                    </Table>
-                  )}
-                </>
+              {!(recordFormOpen && editingAttendance) && (
+                <DailyAttendanceWorkspace
+                  attendance={attendance}
+                  canRecord={isAdminRole(currentUser?.role) || isSuperAdminRole(currentUser?.role)}
+                  canCorrect={isSuperAdminRole(currentUser?.role)}
+                  language={language}
+                  api={api}
+                  onRefresh={fetchAttendance}
+                  onEdit={editAttendance}
+                  onDelete={deleteAttendance}
+                />
               )}
 
             </Page>
@@ -6031,10 +6655,18 @@ function App() {
 
 
           {page === "instructions" && (
-            <Page title={t.instructions}>
+            <Page
+              title={t.instructions}
+              pageKey="instructions"
+              description={language === "fa" ? "صدور و پیگیری دستورهای اداری." : "Issue and review administrative instructions."}
+            >
               <p className="instructions-description">
                 {t.instructionsDescription}
               </p>
+              <ModuleOverview items={[
+                { label: language === "fa" ? "تمام دستورها" : "All instructions", value: instructions.length, tone: "blue" },
+                { label: language === "fa" ? "دستورهای اخیر" : "Recent instructions", value: instructions.slice(0, 4).length, tone: "teal" },
+              ]} />
               {(isAdminRole(currentUser?.role) ||
                 isSuperAdminRole(currentUser?.role)) && (
                 <FormCard title={editingInstruction ? t.edit : t.issueInstruction}>
@@ -6114,7 +6746,11 @@ function App() {
 
           {/* FINANCE OVERVIEW */}
           {page === "finance" && (
-            <Page title={t.finance}>
+            <Page
+              title={t.finance}
+              pageKey="finance"
+              description={language === "fa" ? "نمای کلی درآمد، مصارف، قرض‌ها و پرداخت‌ها." : "A real-time overview of income, expenses, receivables, and payments."}
+            >
               <div className="payment-summary finance-summary">
                 <Stat number={formatMoney(financeIncomeTotal)} label={t.financeTotalIncome} code="IN" />
                 <Stat number={formatMoney(financeExpenseTotal)} label={t.financeTotalExpense} code="EX" />
@@ -6141,7 +6777,18 @@ function App() {
 
           {/* INCOME */}
           {page === "income" && (
-            <Page title={t.incomeRecords}>
+            <Page
+              title={t.incomeRecords}
+              pageKey="income"
+              description={language === "fa" ? "فهرست و ثبت درآمدهای دفتر." : "Review and record office income."}
+              toolbar={renderPageTools("income")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "ثبت‌های درآمد" : "Income records", value: financeIncome.length, tone: "blue" },
+                  { label: t.financeTotalIncome, value: formatMoney(financeIncomeTotal), tone: "teal" },
+                ]} />
+              )}
 
               {recordFormOpen && (
                 <FormCard
@@ -6291,7 +6938,18 @@ function App() {
 
           {/* EXPENSES */}
           {page === "expenses" && (
-            <Page title={t.expenses}>
+            <Page
+              title={t.expenses}
+              pageKey="expenses"
+              description={language === "fa" ? "مرور و ثبت مصارف دفتر." : "Review and record office expenses."}
+              toolbar={renderPageTools("expenses")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "ثبت‌های مصرف" : "Expense records", value: financeExpenses.length, tone: "blue" },
+                  { label: t.financeTotalExpense, value: formatMoney(financeExpenseTotal), tone: "orange" },
+                ]} />
+              )}
 
               {recordFormOpen && (
                 <FormCard
@@ -6454,16 +7112,19 @@ function App() {
 
           {/* DEBTS / RECEIVABLES */}
           {page === "debts" && (
-            <Page title={t.debts}>
+            <Page
+              title={t.debts}
+              pageKey="debts"
+              description={language === "fa" ? "پیگیری قرض‌ها، پرداخت‌شده‌ها و مانده‌حساب‌ها." : "Track debt records, payments, and outstanding balances."}
+              toolbar={renderPageTools("debts")}
+            >
 
               {!recordFormOpen && (
-                <div className="payment-summary">
-                  <Stat
-                    number={formatMoney(financeReceivableTotal)}
-                    label={t.financeReceivable}
-                    code="DR"
-                  />
-                </div>
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "تمام قرض‌ها" : "Debt records", value: financeDebts.length, tone: "blue" },
+                  { label: t.financeReceivable, value: formatMoney(financeReceivableTotal), tone: "orange" },
+                  { label: language === "fa" ? "تسویه‌شده" : "Settled", value: financeDebts.filter((item) => String(item.status).toLowerCase() === "settled").length, tone: "teal" },
+                ]} />
               )}
 
               {recordFormOpen && (
@@ -6671,26 +7332,20 @@ function App() {
           {/* PAYMENTS */}
 
           {page === "payments" && (
-            <Page title={t.payments}>
+            <Page
+              title={t.payments}
+              pageKey="payments"
+              description={language === "fa" ? "مرور تراکنش‌ها و ثبت پرداخت‌های مشتریان." : "Review customer transactions and record payments."}
+              toolbar={renderPageTools("payments")}
+            >
 
               {!recordFormOpen && (
-                <div className="payment-summary">
-                  <Stat
-                    number={formatMoney(income)}
-                    label={t.income}
-                    code="IN"
-                  />
-                  <Stat
-                    number={formatMoney(expense)}
-                    label={t.expense}
-                    code="EX"
-                  />
-                  <Stat
-                    number={formatMoney(balance)}
-                    label={t.balance}
-                    code="BL"
-                  />
-                </div>
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "تمام پرداخت‌ها" : "Payment records", value: payments.length, tone: "blue" },
+                  { label: t.income, value: formatMoney(income), tone: "teal" },
+                  { label: t.expense, value: formatMoney(expense), tone: "orange" },
+                  { label: t.balance, value: formatMoney(balance), tone: "purple" },
+                ]} />
               )}
 
               {recordFormOpen && (
@@ -6886,7 +7541,19 @@ function App() {
           {/* PROJECTS */}
 
           {page === "projects" && (
-            <Page title={t.projects}>
+            <Page
+              title={t.projects}
+              pageKey="projects"
+              description={language === "fa" ? "مرور وضعیت، مسئولان و مهلت پروژه‌ها." : "Track project ownership, status, and deadlines."}
+              toolbar={renderPageTools("projects")}
+            >
+              {!recordFormOpen && (
+                <ModuleOverview items={[
+                  { label: language === "fa" ? "تمام پروژه‌ها" : "All projects", value: projects.length, tone: "blue" },
+                  { label: language === "fa" ? "در جریان" : "In progress", value: projects.filter((item) => item.status === "In Progress").length, tone: "teal" },
+                  { label: language === "fa" ? "تکمیل‌شده" : "Completed", value: projects.filter((item) => item.status === "Completed").length, tone: "purple" },
+                ]} />
+              )}
 
               {recordFormOpen && (
                 <FormCard
@@ -7043,8 +7710,6 @@ function App() {
 
               {!recordFormOpen && (
                 <>
-                  <SectionTitle title={t.projects} />
-
                   {searchItems(projects).length === 0 ? (
                     <Empty text={t.noData} />
                   ) : (
@@ -7109,7 +7774,11 @@ function App() {
 
 
           {page === "my-account" && (
-            <Page title={t.account}>
+            <Page
+              title={t.account}
+              pageKey="my-account"
+              description={language === "fa" ? "اطلاعات شخصی و امنیت حساب کاربری شما." : "Manage your personal profile and account security."}
+            >
               <div className="account-grid">
                 <section className="settings-card">
                   <div className="settings-header">
@@ -7130,6 +7799,12 @@ function App() {
                         {currentUser?.name || currentUser?.username || "User"}
                       </strong>
                       <span>{currentUser?.username || ""}</span>
+                      {currentUser?.email && (
+                        <span className="account-profile-contact">{currentUser.email}</span>
+                      )}
+                      {currentUser?.phone && (
+                        <span className="account-profile-contact">{currentUser.phone}</span>
+                      )}
                     </div>
                   </div>
 
@@ -7172,7 +7847,7 @@ function App() {
 
                   <div className="account-role">
                     <strong>{t.role}</strong>
-                    <span>
+                    <span className="account-role-badge">
                       {isSuperAdminRole(currentUser?.role)
                         ? language === "fa" ? "سوپر ادمین" : "Super Admin"
                         : isAdminRole(currentUser?.role)
@@ -7227,7 +7902,11 @@ function App() {
           {/* SETTINGS */}
 
           {page === "settings" && (
-            <Page title={t.settings}>
+            <Page
+              title={t.settings}
+              pageKey="settings"
+              description={language === "fa" ? "تنظیمات نمایش و ترجیحات برنامه." : "Configure display preferences and application settings."}
+            >
 
               <div className="settings-card">
 
@@ -7439,8 +8118,8 @@ function Dashboard({
   t,
   language,
   customers,
-  users,
-  showUserStats,
+  employees,
+  showUserManagementAction,
   attendance,
   payments,
   projects,
@@ -7502,101 +8181,63 @@ function Dashboard({
     });
 
   return (
-    <section className="content">
+    <section className="content" data-page="dashboard">
 
-      <div className="page-title">
-
-        <nav className="breadcrumbs" aria-label="Breadcrumb">
-          <span>OFFICE MANAGEMENT</span>
-          <span aria-hidden="true">/</span>
-          <span aria-current="page">{t.dashboard}</span>
-        </nav>
-
-        <h1>
-          {t.dashboard}
-        </h1>
-
-        <p>
-          {t.overview}
-        </p>
-
-      </div>
-
-      {/* WELCOME */}
-
-      <div className="welcome-card">
-
-        <div>
-          <small>
-            {t.welcome}
-          </small>
-
-          <h2>
-            OFFICE MANAGEMENT
-          </h2>
-
-          <p>
-            {t.welcomeText}
-          </p>
+      <div className="page-heading-row">
+        <div className="page-title">
+          <nav className="breadcrumbs" aria-label="Breadcrumb">
+            <span>OFFICE MANAGEMENT</span>
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{t.dashboard}</span>
+          </nav>
+          <h1>{t.dashboard}</h1>
+          <p>{t.overview}</p>
         </div>
-
-        {settings.dateTime && (
-          <div className="dashboard-date">
-
-            <strong>
-              {formatDate(
-                now,
-                "en"
-              )}
-            </strong>
-
-            <span>
-              {formatTime(now)}
+        <div className="dashboard-header-meta">
+          {settings.dashboardStats && (
+            <span className="dashboard-attendance">
+              <span aria-hidden="true" />
+              {attendance.length} {t.attendance}
             </span>
-
-          </div>
-        )}
-
+          )}
+          {settings.dateTime && (
+            <div className="dashboard-date">
+              <span>{language === "fa" ? "امروز" : "Today"}</span>
+              <strong>{formatDate(now, language)}</strong>
+              <time>{formatTime(now)}</time>
+            </div>
+          )}
+        </div>
       </div>
-
-      {/* STATS */}
 
       {settings.dashboardStats && (
-        <div className="stats-grid">
-
+        <div className="stats-grid dashboard-stat-grid">
           <Stat
             number={customers.length}
             label={t.customers}
             code="CU"
           />
-
-          {showUserStats && (
-            <Stat
-              number={users.length}
-              label={t.users}
-              code="US"
-            />
-          )}
-
           <Stat
-            number={attendance.length}
-            label={t.attendance}
-            code="AT"
+            number={employees.length}
+            label={t.employee}
+            code="EM"
           />
-
           <Stat
             number={projects.length}
             label={t.projects}
             code="PR"
           />
-
+          <Stat
+            number={payments.length}
+            label={t.payments}
+            code="PY"
+          />
         </div>
       )}
 
-      {/* MONEY */}
-
-      <div className="payment-summary">
-
+      <section className="dashboard-finances" aria-label={t.finance}>
+        <SectionTitle title={language === "fa" ? "نمای کلی مالی" : "FINANCIAL OVERVIEW"} />
+        <div className="payment-summary dashboard-financial-summary">
         <Stat
           number={formatMoney(income)}
           label={t.income}
@@ -7614,319 +8255,116 @@ function Dashboard({
           label={t.balance}
           code="BL"
         />
-
-      </div>
-
-      {/* CURRENCY SMALL */}
+        </div>
+      </section>
 
       {settings.currency && (
-        <div className="currency-card">
-
+        <div className="currency-card dashboard-currency-card">
           <div>
-            <small>
-              {t.currencyConverter}
-            </small>
-
+            <small>{t.currencyConverter}</small>
             <h2>
-              {currencyAmount || 0}{" "}
-              {currencyFrom}
-              {" = "}
-              {convertedAmount}{" "}
-              {currencyTo}
+              {currencyAmount || 0} {currencyFrom}{" = "}{convertedAmount} {currencyTo}
               <small className="currency-summary-label">
-                {" — "}{currencyLabel(currencyFrom, language)}
-                {" → "}{currencyLabel(currencyTo, language)}
+                {" — "}{currencyLabel(currencyFrom, language)}{" → "}{currencyLabel(currencyTo, language)}
               </small>
             </h2>
           </div>
-
           <div className="currency-controls">
-
-            <input
-              type="number"
-              value={
-                currencyAmount
-              }
-              onChange={(e) =>
-                setCurrencyAmount(
-                  e.target.value
-                )
-              }
-            />
-
-            <select
-              value={currencyFrom}
-              onChange={(e) =>
-                setCurrencyFrom(
-                  e.target.value
-                )
-              }
-            >
-              {Object.keys(RATES).map(
-                (currency) => (
-                  <option
-                    key={currency}
-                    value={currency}
-                  >
-                    {currencyLabel(currency, language)}
-                  </option>
-                )
-              )}
+            <input type="number" value={currencyAmount} onChange={(e) => setCurrencyAmount(e.target.value)} />
+            <select value={currencyFrom} onChange={(e) => setCurrencyFrom(e.target.value)}>
+              {Object.keys(RATES).map((currency) => (
+                <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
+              ))}
             </select>
-
-            <span>
-              →
-            </span>
-
-            <select
-              value={currencyTo}
-              onChange={(e) =>
-                setCurrencyTo(
-                  e.target.value
-                )
-              }
-            >
-              {Object.keys(RATES).map(
-                (currency) => (
-                  <option
-                    key={currency}
-                    value={currency}
-                  >
-                    {currencyLabel(currency, language)}
-                  </option>
-                )
-              )}
+            <span aria-hidden="true">→</span>
+            <select value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)}>
+              {Object.keys(RATES).map((currency) => (
+                <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
+              ))}
             </select>
-
           </div>
-
         </div>
       )}
-
-      {/* DEADLINE WARNING */}
 
       {settings.overdueWarning &&
         overdueProjects.length > 0 && (
           <div className="warning-card">
-
             <div>
-              <strong>
-                {t.projectWarning}
-              </strong>
-
-              <p>
-                {overdueProjects.length}{" "}
-                {t.overdue}
-              </p>
+              <strong>{t.projectWarning}</strong>
+              <p>{overdueProjects.length} {t.overdue}</p>
             </div>
-
-            <button
-              onClick={() =>
-                setPage("projects")
-              }
-            >
-              VIEW
+            <button type="button" onClick={() => setPage("projects")}>
+              {language === "fa" ? "مشاهده" : "VIEW"}
             </button>
-
           </div>
         )}
 
-      {/* RECENT */}
-
-      <div className="dashboard-grid">
-
-        <div className="dashboard-panel">
-
-          <SectionTitle
-            title={t.recentProjects}
-          />
-
-          {activeProjects
-            .slice(0, 5)
-            .map((project) => (
-              <div
-                className="recent-row"
-                key={project.id}
-              >
-
-                <div>
-                  <strong>
-                    {project.title}
-                  </strong>
-
-                  <small>
-                    {project.employee ||
-                      "—"}
-                  </small>
-                </div>
-
-                <Status
-                  value={
-                    project.status
-                  }
-                />
-
-              </div>
-            ))}
-
-          {activeProjects.length ===
-            0 && (
-            <Empty
-              text={t.noData}
-            />
-          )}
-
-        </div>
-
-        <div className="dashboard-panel">
-
-          <SectionTitle
-            title={t.recentPayments}
-          />
-
-          {payments
-            .slice(0, 5)
-            .map((payment) => (
-              <div
-                className="recent-row"
-                key={payment.id}
-              >
-
-                <div>
-                  <strong>
-                    {formatMoney(
-                      payment.amount
-                    )}
-                  </strong>
-
-                  <small>
-                    {payment.description ||
-                      "Payment"}
-                  </small>
-                </div>
-
-                <Status
-                  value={
-                    payment.type
-                  }
-                />
-
-              </div>
-            ))}
-
-          {payments.length ===
-            0 && (
-            <Empty
-              text={t.noData}
-            />
-          )}
-
-        </div>
-
-      </div>
-
-      {/* EXPENSES CHART */}
-
-      <div className="dashboard-panel expense-chart-panel">
-        <SectionTitle
-          title={
-            language === "fa"
-              ? "نمودار مصارف"
-              : "EXPENSES CHART"
-          }
-        />
-
-        {expenseChartData.length === 0 ? (
-          <Empty text={t.noData} />
-        ) : (
-          <div className="expense-chart-list">
-            {expenseChartData.map((item) => {
-              const amount =
-                Number(item.amount || 0);
-
-              const width = Math.max(
-                6,
-                (amount / maxChartExpense) * 100
-              );
-
-              return (
-                <div
-                  className="expense-chart-row"
-                  key={item.id}
-                >
-                  <div className="expense-chart-head">
-                    <strong>
-                      {item.title ||
-                        (language === "fa"
-                          ? "مصرف"
-                          : "Expense")}
-                    </strong>
-                    <span>
-                      {formatMoney(amount)}
-                    </span>
+      <div className="dashboard-main-grid">
+        <section className="dashboard-panel expense-chart-panel dashboard-chart">
+          <SectionTitle title={language === "fa" ? "نمودار مصارف" : "EXPENSES CHART"} />
+          {expenseChartData.length === 0 ? (
+            <Empty text={t.noData} />
+          ) : (
+            <div className="expense-chart-list">
+              {expenseChartData.map((item) => {
+                const amount = Number(item.amount || 0);
+                const width = Math.max(6, (amount / maxChartExpense) * 100);
+                return (
+                  <div className="expense-chart-row" key={item.id}>
+                    <div className="expense-chart-head">
+                      <strong>{item.title || (language === "fa" ? "مصرف" : "Expense")}</strong>
+                      <span>{formatMoney(amount)}</span>
+                    </div>
+                    <div className="expense-chart-track">
+                      <div className="expense-chart-bar" style={{ width: `${width}%` }} />
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
-                  <div className="expense-chart-track">
-                    <div
-                      className="expense-chart-bar"
-                      style={{
-                        width: `${width}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+        <aside className="dashboard-panel dashboard-quick-actions">
+          <SectionTitle title={t.quickActions} />
+          <div className="quick-buttons">
+            <button type="button" onClick={() => setPage("customers")}>＋ {t.customers}</button>
+            {showUserManagementAction && (
+              <button type="button" onClick={() => setPage("users")}>＋ {t.users}</button>
+            )}
+            <button type="button" onClick={() => setPage("payments")}>＋ {t.payments}</button>
+            <button type="button" onClick={() => setPage("projects")}>＋ {t.projects}</button>
           </div>
-        )}
+        </aside>
       </div>
 
-      {/* QUICK ACTIONS */}
-
-      <div className="quick-actions">
-
-        <SectionTitle
-          title={t.quickActions}
-        />
-
-        <div className="quick-buttons">
-
-          <button
-            onClick={() =>
-              setPage("customers")
-            }
-          >
-            + {t.customers}
-          </button>
-
-          {showUserStats && (
-            <button
-              onClick={() =>
-                setPage("users")
-              }
-            >
-              + {t.users}
-            </button>
-          )}
-
-          <button
-            onClick={() =>
-              setPage("payments")
-            }
-          >
-            + {t.payments}
-          </button>
-
-          <button
-            onClick={() =>
-              setPage("projects")
-            }
-          >
-            + {t.projects}
-          </button>
-
+      <div className="dashboard-activity">
+        <div className="dashboard-panel">
+          <SectionTitle title={t.recentProjects} />
+          {activeProjects.slice(0, 5).map((project) => (
+            <div className="recent-row" key={project.id}>
+              <div>
+                <strong>{project.title}</strong>
+                <small>{project.employee || "—"}</small>
+              </div>
+              <Status value={project.status} />
+            </div>
+          ))}
+          {activeProjects.length === 0 && <Empty text={t.noData} />}
         </div>
-
+        <div className="dashboard-panel">
+          <SectionTitle title={t.recentPayments} />
+          {payments.slice(0, 5).map((payment) => (
+            <div className="recent-row" key={payment.id}>
+              <div>
+                <strong>{formatMoney(payment.amount)}</strong>
+                <small>{payment.description || t.payments}</small>
+              </div>
+              <Status value={payment.type} />
+            </div>
+          ))}
+          {payments.length === 0 && <Empty text={t.noData} />}
+        </div>
       </div>
 
     </section>
@@ -7940,6 +8378,7 @@ function Dashboard({
 function PageTools({
   t,
   language,
+  page,
   search,
   setSearch,
   onCreate,
@@ -7948,7 +8387,7 @@ function PageTools({
   showExcel,
 }) {
   return (
-    <div className="page-tools">
+    <div className="page-tools" data-page-tools={page}>
       <div className="page-search">
         <span>⌕</span>
 
@@ -7994,25 +8433,28 @@ function PageTools({
 
 function Page({
   title,
+  pageKey,
+  description,
+  toolbar,
   children,
 }) {
   return (
-    <section className="content">
-
-      <div className="page-title">
-
-        <nav className="breadcrumbs" aria-label="Breadcrumb">
-          <span>OFFICE MANAGEMENT</span>
-          <span aria-hidden="true">/</span>
-          <span aria-current="page">{title}</span>
-        </nav>
-
-        <h1>{title}</h1>
-
+    <section className="content page-content" data-page={pageKey}>
+      <header className="page-heading-row">
+        <div className="page-title">
+          <nav className="breadcrumbs" aria-label="Breadcrumb">
+            <span>OFFICE MANAGEMENT</span>
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{title}</span>
+          </nav>
+          <h1>{title}</h1>
+          {description && <p className="page-description">{description}</p>}
+        </div>
+        {toolbar}
+      </header>
+      <div className="page-body">
+        {children}
       </div>
-
-      {children}
-
     </section>
   );
 }
@@ -8029,7 +8471,7 @@ function AdminDashboard({
   const recentInstructions = instructions.slice(0, 4);
 
   return (
-    <Page title={t.dashboard}>
+    <Page title={t.dashboard} pageKey="dashboard">
       <p className="dashboard-intro">
         {language === "fa"
           ? "نمای کلی حاضری و دستورهای دفتر."
@@ -8470,6 +8912,20 @@ function Stat({
 
       </div>
 
+    </div>
+  );
+}
+
+function ModuleOverview({ items }) {
+  return (
+    <div className="module-overview" aria-label="Page summary">
+      {items.map((item) => (
+        <article className={`module-summary tone-${item.tone || "blue"}`} key={item.label}>
+          <span className="module-summary-marker" aria-hidden="true" />
+          <small>{item.label}</small>
+          <strong>{item.value}</strong>
+        </article>
+      ))}
     </div>
   );
 }
