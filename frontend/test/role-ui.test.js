@@ -454,6 +454,10 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
     async function captureScreenshot(name) {
       if (!screenshotDirectory) return;
       if (await evaluate("window.innerWidth <= 700")) await delay(500);
+      if (name.startsWith("final-super-admin-dashboard")) {
+        await evaluate(`document.querySelector(".toast-dismiss")?.click()`);
+        await delay(100);
+      }
       const { data } = await cdp("Page.captureScreenshot", {
         format: "png",
         captureBeyondViewport: false,
@@ -516,7 +520,7 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
         localStorage.setItem("office_language", "en");
         location.href = ${JSON.stringify(`http://127.0.0.1:${appPort}/`)};
       })()`);
-      await waitFor("Boolean(document.querySelector('.app .account-entry'))", `${role} app should render`);
+      await waitFor("Boolean(document.querySelector('.app .sidebar-profile'))", `${role} app should render`);
       await waitFor(
         `document.querySelector('.sidebar-role-badge')?.textContent.toLowerCase().includes(${JSON.stringify(role === "super_admin" ? "super admin" : role)})`,
         `${role} role from /api/me should replace stale cached role`
@@ -602,6 +606,20 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
           financialColumns: page.querySelector(".dashboard-financial-summary")
             ? getComputedStyle(page.querySelector(".dashboard-financial-summary")).gridTemplateColumns.split(" ").length
             : null,
+          dashboardStatCount: page.querySelectorAll(".dashboard-stat-grid > .stat").length,
+          dashboardUsersKpi: Boolean(page.querySelector(".dashboard-stat-grid.has-users-kpi")),
+          dashboardMainColumnRatio: (() => {
+            const grid = page.querySelector(".dashboard-main-grid");
+            if (!grid) return null;
+            const columns = getComputedStyle(grid).gridTemplateColumns.split(" ").map(Number.parseFloat);
+            return columns.length === 2 ? columns[0] / columns[1] : null;
+          })(),
+          currencyControlColumns: page.querySelector(".currency-controls")
+            ? getComputedStyle(page.querySelector(".currency-controls")).gridTemplateColumns.split(" ").length
+            : null,
+          currencyControlWidth: page.querySelector(".currency-controls")?.getBoundingClientRect().width || 0,
+          currencySelectWidths: Array.from(page.querySelectorAll(".currency-controls select"))
+            .map((select) => select.getBoundingClientRect().width),
           headingMetrics: (() => {
             const heading = page.querySelector(".page-title h1");
             if (!heading) return null;
@@ -619,6 +637,25 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
           })(),
           pageWidth: page.getBoundingClientRect().width,
           pageTitleHeight: page.querySelector(".page-title")?.getBoundingClientRect().height,
+          pageTitleMetrics: (() => {
+            const title = page.querySelector(".page-title");
+            if (!title) return null;
+            const style = getComputedStyle(title);
+            return {
+              width: title.getBoundingClientRect().width,
+              padding: style.padding,
+              margin: style.margin,
+              gap: style.rowGap,
+              children: Array.from(title.children).map((child) => ({
+                tag: child.tagName,
+                text: child.textContent.trim(),
+                height: child.getBoundingClientRect().height,
+                width: child.getBoundingClientRect().width,
+                maxWidth: getComputedStyle(child).maxWidth,
+                margin: getComputedStyle(child).margin,
+              })),
+            };
+          })(),
           viewportWidth: document.documentElement.clientWidth,
           documentWidth: document.documentElement.scrollWidth
         };
@@ -642,7 +679,7 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       assert.ok(state.documentWidth <= state.viewportWidth, `${pageKey} should not create horizontal page overflow`);
       if (state.viewportWidth <= 700 && state.headingMetrics) {
         assert.ok(state.headingMetrics.height < 60, `${pageKey} heading should remain compact on mobile; metrics=${JSON.stringify(state.headingMetrics)}`);
-        assert.ok(state.pageTitleHeight < 180, `${pageKey} page heading should not leave excessive mobile whitespace; height=${state.pageTitleHeight}`);
+        assert.ok(state.pageTitleHeight < 180, `${pageKey} page heading should not leave excessive mobile whitespace; height=${state.pageTitleHeight}, details=${JSON.stringify(state.pageTitleMetrics)}`);
         if (!state.mobileMenuOpen) {
           assert.ok(
             expectedDirection === "rtl"
@@ -653,24 +690,56 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
         }
       }
       if (pageKey === "customers" && state.viewportWidth > 700) {
-        assert.equal(state.toolbarOnOneRow, true, `Customer search and actions should share one desktop toolbar row: ${JSON.stringify(state.toolbarMetrics)}`);
+        if (state.viewportWidth > 1100) {
+          assert.equal(state.toolbarOnOneRow, true, `Customer search and actions should share one desktop toolbar row: ${JSON.stringify(state.toolbarMetrics)}`);
+        }
       }
       if (state.dashboardStatColumns !== null) {
+        const expectedStatColumns = state.viewportWidth > 1349
+          ? state.dashboardUsersKpi ? 5 : 4
+          : state.viewportWidth > 1100
+            ? state.dashboardUsersKpi ? 3 : 4
+            : state.viewportWidth > 650
+              ? 2
+              : 1;
         assert.equal(
           state.dashboardStatColumns,
-          state.viewportWidth > 700 ? 4 : 2,
-          "Dashboard should show all four statistics in a responsive grid"
+          expectedStatColumns,
+          "Dashboard KPIs should use a balanced responsive grid"
+        );
+        assert.equal(
+          state.dashboardStatCount,
+          state.dashboardUsersKpi ? 5 : 4,
+          "Only Super Admin should see the fifth Users KPI"
         );
         assert.equal(
           state.dashboardMainColumns,
           state.viewportWidth > 700 ? 2 : 1,
           "Dashboard chart and quick actions should use a responsive two-column layout"
         );
+        if (state.dashboardMainColumns === 2) {
+          assert.ok(
+            state.dashboardMainColumnRatio >= 1.5 && state.dashboardMainColumnRatio <= 2.1,
+            `Financial chart and quick actions should keep a balanced 65/35 split; ratio=${state.dashboardMainColumnRatio}`
+          );
+        }
         assert.equal(
           state.financialColumns,
-          state.viewportWidth > 700 ? 3 : 2,
-          "Dashboard financial overview should show income, expenses, and balance"
+          state.viewportWidth > 650 ? 3 : 1,
+          "Financial overview should keep all three cards together and stack on mobile"
         );
+        if (state.currencyControlColumns !== null) {
+          assert.equal(
+            state.currencyControlColumns,
+            state.viewportWidth > 650 ? 4 : 1,
+            "Currency controls should use a responsive layout and stack on mobile"
+          );
+          assert.ok(
+            state.currencySelectWidths.every((width) => width > 0) &&
+              state.currencyControlWidth >= Math.max(...state.currencySelectWidths),
+            "Currency selectors should remain visible within their controls"
+          );
+        }
       }
     }
 
@@ -738,11 +807,35 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
     }
 
     await loadRole("user");
+    await waitFor(
+      `document.querySelector(".toast")?.textContent.includes("Data refreshed")`,
+      "Successful refresh should announce its result in a toast"
+    );
+    assert.equal(
+      await evaluate(`(() => {
+        const toast = document.querySelector(".toast");
+        const dismiss = toast?.querySelector(".toast-dismiss");
+        const page = document.querySelector('.content[data-page="dashboard"]');
+        const intersects = (a, b) => a && b &&
+          a.left < b.right && a.right > b.left &&
+          a.top < b.bottom && a.bottom > b.top;
+        const bounds = toast?.getBoundingClientRect();
+        return getComputedStyle(toast).position === "fixed" &&
+          getComputedStyle(toast).zIndex === "10000" &&
+          dismiss?.getAttribute("aria-label") === "Dismiss notification" &&
+          !intersects(bounds, page?.querySelector(".page-title")?.getBoundingClientRect()) &&
+          !intersects(bounds, page?.querySelector(".dashboard-main-grid")?.getBoundingClientRect());
+      })()`),
+      true,
+      "Toast should be fixed, dismissible, and kept clear of dashboard content"
+    );
+    await evaluate(`document.querySelector(".toast-dismiss").click()`);
+    await waitFor("!document.querySelector('.toast')", "Dismiss should immediately close the toast");
     assert.deepEqual(
       await evaluate(`(() => {
         const sidebar = getComputedStyle(document.querySelector(".sidebar"));
         const workspace = getComputedStyle(document.querySelector(".main"));
-        const account = getComputedStyle(document.querySelector(".account-entry"));
+        const account = getComputedStyle(document.querySelector(".sidebar-profile"));
         return [
           sidebar.backgroundColor,
           workspace.backgroundColor,
@@ -761,18 +854,18 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       localStorage.setItem("office_language", "fa");
       location.reload();
     })()`);
-    await waitFor("Boolean(document.querySelector('.app .account-entry'))", "Persian Account entry should render");
+    await waitFor("Boolean(document.querySelector('.app .sidebar-profile'))", "Persian profile summary should render");
     assert.equal(
-      await evaluate(`document.querySelector(".account-entry-label")?.textContent.includes("حساب کاربری")`),
+      await evaluate(`document.querySelector(".header-account-label")?.textContent.includes("حساب کاربری")`),
       true,
-      "Persian navigation should show the Account label"
+      "Persian header should show the single Account entry"
     );
     assert.equal(await evaluate(`document.querySelector(".app")?.classList.contains("rtl")`), true);
     await evaluate(`(() => {
       localStorage.setItem("office_language", "en");
       location.reload();
     })()`);
-    await waitFor("Boolean(document.querySelector('.app .account-entry'))", "English Account entry should render");
+    await waitFor("Boolean(document.querySelector('.app .sidebar-profile'))", "English profile summary should render");
     let nav = await labels();
     assert.equal(nav.some((label) => label.includes("users")), false);
     assert.equal(
@@ -887,7 +980,7 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       "Instruction fields should use the compact desktop layout"
     );
     await verifyPageBothLanguages("instructions");
-    await evaluate(`document.querySelector(".account-entry").click()`);
+    await evaluate(`document.querySelector(".header-account-entry").click()`);
     await waitFor("Boolean(document.querySelector('.account-grid'))", "Admin Account page should open");
     await inspectRenderedPage("my-account");
     await verifyPageBothLanguages("my-account");
@@ -930,6 +1023,9 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       "settings",
     ]) {
       await visitPrimaryPage(pageLabel);
+      if (pageLabel === "dashboard") {
+        await captureScreenshot("final-super-admin-dashboard-en-1440");
+      }
       await verifyRecordForm(pageLabel);
       if (pageLabel === "attendance") {
         await evaluate(`document.querySelector(".daily-attendance-settings > button").click()`);
@@ -962,7 +1058,7 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
 
     await loadRole("user", "super_admin");
     await cdp("Page.navigate", { url: `http://127.0.0.1:${appPort}/users` });
-    await waitFor("Boolean(document.querySelector('.app .account-entry'))", "Direct URL fallback should remain authenticated");
+    await waitFor("Boolean(document.querySelector('.app .sidebar-profile'))", "Direct URL fallback should remain authenticated");
     assert.equal(
       await evaluate(`document.querySelector(".content h1")?.textContent.trim().toLowerCase() === "users"`),
       false,
@@ -984,7 +1080,7 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
       document.querySelector(".login-box form button[type=submit]").click();
     })()`);
-    await waitFor("Boolean(document.querySelector('.app .account-entry'))", "Admin should sign in after logout");
+    await waitFor("Boolean(document.querySelector('.app .sidebar-profile'))", "Admin should sign in after logout");
     assert.equal(
       await evaluate(`document.querySelector(".sidebar-role-badge")?.textContent.trim() === "Admin"`),
       true,
@@ -999,18 +1095,48 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       deviceScaleFactor: 1,
       mobile: true,
     });
+    assert.equal(
+      await evaluate(`(() => {
+        const account = document.querySelector(".header-account-entry");
+        const name = account?.querySelector(".header-account-name");
+        const role = account?.querySelector(".header-account-role");
+        const label = account?.querySelector(".header-account-label");
+        return name?.textContent.trim() === "Amin Operator" &&
+          getComputedStyle(name).display !== "none" &&
+          name.getBoundingClientRect().width > 0 &&
+          role?.textContent.trim() === "Admin" &&
+          role.getBoundingClientRect().width > 0 &&
+          label?.textContent.trim() === "Account" &&
+          label.getBoundingClientRect().width > 0;
+      })()`),
+      true,
+      "Mobile Account entry should visibly identify the user, role, and destination"
+    );
     await evaluate(`document.querySelector(".mobile-menu-toggle").click()`);
     await waitFor("document.querySelector('.app').classList.contains('mobile-menu-open')", "Mobile navigation drawer should open");
+    assert.equal(
+      await evaluate(`getComputedStyle(document.querySelector(".sidebar-mobile-close")).display !== "none"`),
+      true,
+      "The open mobile drawer should expose a visible close control"
+    );
     assert.equal(
       await evaluate(`document.documentElement.scrollWidth <= window.innerWidth`),
       true,
       "Mobile navigation should not create horizontal page overflow"
     );
-    await evaluate(`document.querySelector(".account-entry").click()`);
+    await evaluate(`document.querySelector(".sidebar-mobile-close").click()`);
     assert.equal(
       await evaluate(`document.querySelector(".app").classList.contains("mobile-menu-open")`),
       false,
-      "Choosing Account should close the mobile drawer"
+      "The mobile drawer close control should close navigation"
+    );
+    await evaluate(`document.querySelector(".mobile-menu-toggle").click()`);
+    await waitFor("document.querySelector('.app').classList.contains('mobile-menu-open')", "Mobile navigation should reopen");
+    await evaluate(`document.querySelector(".header-account-entry").click()`);
+    assert.equal(
+      await evaluate(`document.querySelector(".app").classList.contains("mobile-menu-open")`),
+      false,
+      "Opening Account should close the mobile drawer"
     );
     await inspectRenderedPage("my-account");
     await verifyPageBothLanguages("my-account");
@@ -1059,6 +1185,9 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
       "settings",
     ]) {
       await visitPrimaryPage(pageLabel);
+      if (pageLabel === "dashboard") {
+        await captureScreenshot("final-super-admin-dashboard-mobile-en-390");
+      }
       await verifyRecordForm(pageLabel);
     }
     await visitPrimaryPage("finance");
@@ -1091,6 +1220,54 @@ test("role-aware UI, Account privacy, direct navigation, and role switching", as
     );
     await evaluate(`document.querySelector(".login-language button:first-child").click()`);
     await captureScreenshot("login-mobile-en");
+
+    await cdp("Emulation.setDeviceMetricsOverride", {
+      width: 768,
+      height: 1024,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await loadRole("super_admin");
+    assert.equal(
+      await evaluate(`(() => {
+        const sidebar = document.querySelector(".sidebar");
+        const label = document.querySelector("#primary-navigation .nav-button .nav-label");
+        const toggle = document.querySelector(".sidebar-toggle");
+        return sidebar.getBoundingClientRect().width >= 200 &&
+          sidebar.getBoundingClientRect().width <= 240 &&
+          getComputedStyle(label).display !== "none" &&
+          getComputedStyle(toggle).display !== "none";
+      })()`),
+      true,
+      "Tablet navigation should retain readable labels and an obvious expand/collapse control"
+    );
+    await inspectRenderedPage("dashboard");
+    await captureScreenshot("super-admin-dashboard-tablet-en-768");
+    for (const pageLabel of [
+      "customers",
+      "employees",
+      "attendance",
+      "instructions",
+      "settings",
+    ]) {
+      await visitPrimaryPage(pageLabel);
+    }
+    await visitPrimaryPage("finance");
+    await visitFinancePage("payments");
+    await evaluate(`document.querySelector(".header-account-entry").click()`);
+    await waitFor("Boolean(document.querySelector('.content[data-page=\"my-account\"]'))", "Tablet Account page should render");
+    await inspectRenderedPage("my-account");
+
+    await loadRole("admin");
+    await inspectRenderedPage("dashboard");
+    await visitPrimaryPage("attendance");
+    await visitPrimaryPage("instructions");
+
+    await loadRole("user");
+    await inspectRenderedPage("dashboard");
+    await evaluate(`document.querySelector(".header-account-entry").click()`);
+    await waitFor("Boolean(document.querySelector('.content[data-page=\"my-account\"]'))", "Tablet User Account page should render");
+    await inspectRenderedPage("my-account");
   } finally {
     try {
       if (socket?.readyState === WebSocket.OPEN && browser?.exitCode === null) {

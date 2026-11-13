@@ -408,6 +408,16 @@ function isSupportedRole(role) {
   );
 }
 
+function getRoleLabel(role, language) {
+  if (isSuperAdminRole(role)) {
+    return language === "fa" ? "سوپر ادمین" : "Super Admin";
+  }
+  if (isAdminRole(role)) {
+    return language === "fa" ? "مدیر" : "Admin";
+  }
+  return language === "fa" ? "کاربر" : "User";
+}
+
 function canCreateRecordAs(user, targetPage) {
   const role = normalizeRoleValue(user?.role);
   if (isSuperAdminRole(role)) return true;
@@ -909,6 +919,15 @@ function DailyAttendanceWorkspace({
 
   return (
     <section className="daily-attendance" dir={isPersian ? "rtl" : "ltr"}>
+      <header className="daily-attendance-heading">
+        <div>
+          <h2>{labels.printTitle}</h2>
+          <p>{formatDate(date)}</p>
+        </div>
+        <span className={isSelectedDateToday ? "is-today" : ""}>
+          {isSelectedDateToday ? labels.today : labels.date}
+        </span>
+      </header>
       <div className="daily-attendance-toolbar">
         <label className="daily-attendance-date">
           <span>{labels.date}</span>
@@ -1229,6 +1248,8 @@ function App() {
     localStorage.getItem("office_sidebar_collapsed") === "true"
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [customerContractFilter, setCustomerContractFilter] = useState("all");
+  const [settingsTab, setSettingsTab] = useState("general");
 
   const [toast, setToast] = useState("");
 
@@ -3389,6 +3410,15 @@ function App() {
     );
   }
 
+  function getVisibleCustomerRows() {
+    return getCustomerRows(customers).filter(({ item }) =>
+      customerContractFilter === "all" ||
+      (customerContractFilter === "linked"
+        ? Boolean(item.contract_id)
+        : !item.contract_id)
+    );
+  }
+
   // Sequential numbering for all management tables.
   // Registration order is determined by the database ID; the real ID is never changed.
   function getNumberedRows(items) {
@@ -3416,7 +3446,7 @@ function App() {
     );
   }
 
-  function renderPageTools(targetPage) {
+  function renderPageTools(targetPage, filters = null) {
     const supportedPages = [
       "customers",
       "employees",
@@ -3450,6 +3480,7 @@ function App() {
         onPrint={() => printVisibleTable(targetPage)}
         onExcel={() => downloadExcelBackup(targetPage)}
         showExcel={!isAdminRole(currentUser?.role)}
+        filters={filters}
       />
     );
   }
@@ -5149,6 +5180,1152 @@ function App() {
           grid-template-columns: minmax(0, 1fr) !important;
         }
       }
+
+      .app .sidebar {
+        width: 248px !important;
+        min-width: 248px !important;
+        padding: 18px 14px !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+      }
+
+      .app:not(.sidebar-collapsed) .main {
+        width: calc(100% - 248px) !important;
+        margin-left: 248px !important;
+        margin-right: 0 !important;
+      }
+
+      .app.rtl:not(.sidebar-collapsed) .sidebar {
+        left: auto !important;
+        right: 0 !important;
+      }
+
+      .app.rtl:not(.sidebar-collapsed) .main {
+        margin-left: 0 !important;
+        margin-right: 248px !important;
+      }
+
+      .app .brand {
+        position: relative !important;
+        min-width: 0 !important;
+        padding: 4px 38px 18px 4px !important;
+      }
+
+      .app.rtl .brand {
+        padding: 4px 4px 18px 38px !important;
+      }
+
+      .app .brand-copy {
+        min-width: 0 !important;
+      }
+
+      .app .sidebar-toggle {
+        position: absolute !important;
+        inset-inline-end: 0 !important;
+        inset-inline-start: auto !important;
+        top: 2px !important;
+        width: 30px !important;
+        height: 30px !important;
+        border: 1px solid rgba(255,255,255,.2) !important;
+        border-radius: 8px !important;
+        background: rgba(255,255,255,.08) !important;
+        color: #e7f2f1 !important;
+      }
+
+      .app .sidebar-mobile-close {
+        display: none !important;
+      }
+
+      .app .sidebar-profile {
+        display: flex !important;
+        align-items: center !important;
+        gap: 11px !important;
+        min-width: 0 !important;
+        min-height: 72px !important;
+        margin: 14px 0 12px !important;
+        padding: 10px !important;
+        border: 1px solid rgba(255,255,255,.14) !important;
+        border-radius: 12px !important;
+        background: #193644 !important;
+        color: #f3f8f8 !important;
+        text-align: start !important;
+      }
+
+      .app .sidebar-profile-avatar {
+        display: grid !important;
+        width: 40px !important;
+        height: 40px !important;
+        flex: 0 0 40px !important;
+        place-items: center !important;
+        border: 1px solid rgba(255,255,255,.16) !important;
+        border-radius: 50% !important;
+        background: #087f70 !important;
+        color: #fff !important;
+        font-size: 15px !important;
+        font-weight: 750 !important;
+      }
+
+      .app .sidebar-profile-info {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        min-width: 0 !important;
+        gap: 5px !important;
+      }
+
+      .app .sidebar-profile-info strong {
+        max-width: 100% !important;
+        color: #f6f9fa !important;
+        font-size: 13px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+
+      .app .sidebar-profile-info .sidebar-role-badge {
+        display: inline-flex !important;
+        width: fit-content !important;
+        padding: 3px 8px !important;
+        border: 1px solid rgba(255,255,255,.15) !important;
+        border-radius: 999px !important;
+        background: rgba(255,255,255,.08) !important;
+        color: #b7ccc9 !important;
+        font-size: 10px !important;
+        font-weight: 650 !important;
+        letter-spacing: 0 !important;
+        text-transform: none !important;
+      }
+
+      .app .nav-button {
+        min-height: 44px !important;
+        gap: 12px !important;
+        padding: 10px 11px !important;
+        text-align: start !important;
+      }
+
+      .app .nav-button .nav-icon {
+        display: grid !important;
+        width: 22px !important;
+        height: 22px !important;
+        flex: 0 0 22px !important;
+        place-items: center !important;
+      }
+
+      .app .nav-button .nav-icon svg {
+        width: 19px !important;
+        height: 19px !important;
+        fill: none !important;
+        stroke: currentColor !important;
+        stroke-width: 1.8 !important;
+        stroke-linecap: round !important;
+        stroke-linejoin: round !important;
+      }
+
+      .app .nav-button .nav-label {
+        min-width: 0 !important;
+        overflow-wrap: anywhere !important;
+        white-space: normal !important;
+      }
+
+      .app .sidebar nav {
+        gap: 6px !important;
+      }
+
+      .app .sidebar .finance-subnav {
+        margin-inline: 8px 0 !important;
+      }
+
+      .app.rtl .sidebar .finance-subnav {
+        margin-inline: 0 8px !important;
+      }
+
+      .app .topbar {
+        min-width: 0 !important;
+      }
+
+      .app .header-account-entry {
+        min-width: 0 !important;
+      }
+
+      .app .header-account-details {
+        display: grid !important;
+        min-width: 0 !important;
+        gap: 2px !important;
+        text-align: start !important;
+      }
+
+      .app .header-account-name {
+        max-width: 190px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+
+      .app .header-account-role {
+        color: #71838a !important;
+        font-size: 10px !important;
+        font-weight: 550 !important;
+        line-height: 1.2 !important;
+      }
+
+      .app .content[data-page] .dashboard-attendance-summary {
+        min-width: 0;
+      }
+
+      .app .content[data-page="dashboard"] .dashboard-attendance-stats {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        margin-bottom: 0 !important;
+      }
+
+      .app .content[data-page="dashboard"] .dashboard-main-grid {
+        grid-template-columns: minmax(0, 1.85fr) minmax(230px, 1fr) !important;
+      }
+
+      .app .content[data-page="dashboard"] .dashboard-activity {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      }
+
+      .app .content[data-page="dashboard"] .dashboard-activity > .dashboard-panel {
+        min-width: 0 !important;
+      }
+
+      .app .content[data-page="dashboard"] .expense-chart-row {
+        display: grid !important;
+        gap: 7px !important;
+      }
+
+      .app .content[data-page="dashboard"] .expense-chart-head {
+        align-items: flex-start !important;
+        gap: 12px !important;
+      }
+
+      .app .content[data-page="dashboard"] .expense-chart-head > strong {
+        min-width: 0 !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      .app .content[data-page="dashboard"] .financial-chart-value {
+        display: grid !important;
+        flex: 0 0 auto !important;
+        gap: 2px !important;
+        text-align: end !important;
+      }
+
+      .app .content[data-page="dashboard"] .financial-chart-value small,
+      .app .content[data-page="dashboard"] .expense-chart-row > time {
+        color: #71838a !important;
+        font-size: 10px !important;
+      }
+
+      .app .content[data-page="dashboard"] .expense-chart-row.chart-income .expense-chart-bar {
+        background: linear-gradient(90deg, #2586c7, #56a9e3) !important;
+      }
+
+      .app .content[data-page="dashboard"] .expense-chart-row.chart-expense .expense-chart-bar {
+        background: linear-gradient(90deg, #e08b36, #f3b35f) !important;
+      }
+
+      .app .content[data-page="dashboard"] .dashboard-currency-card {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 1.1fr) !important;
+        align-items: center !important;
+        gap: 18px !important;
+      }
+
+      .app .content[data-page="dashboard"] .currency-controls {
+        display: grid !important;
+        grid-template-columns: minmax(70px, .7fr) minmax(0, 1fr) auto minmax(0, 1fr) !important;
+        align-items: center !important;
+        gap: 8px !important;
+        min-width: 0 !important;
+      }
+
+      .app .content[data-page="dashboard"] .currency-controls input,
+      .app .content[data-page="dashboard"] .currency-controls select {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        height: 42px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+
+      .app .content[data-page="dashboard"] .currency-card h2 {
+        font-size: clamp(16px, 1.4vw, 21px) !important;
+        line-height: 1.5 !important;
+      }
+
+      .app .content[data-page="customers"] .customer-identity {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 160px;
+      }
+
+      .app .content[data-page="customers"] .customer-identity strong {
+        min-width: 0;
+        color: #263d45;
+        overflow-wrap: anywhere;
+      }
+
+      .app .content[data-page="customers"] .customer-contract-badge {
+        display: inline-flex;
+        align-items: center;
+        max-width: 160px;
+        padding: 5px 9px;
+        border: 1px solid #c9dff5;
+        border-radius: 999px;
+        background: #eef6fd;
+        color: #28669e;
+        font-size: 11px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .app .page-tools .customer-contract-filter {
+        display: grid;
+        gap: 4px;
+        min-width: 130px;
+        color: #53666e;
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .app .page-tools .customer-contract-filter select {
+        min-height: 40px !important;
+        min-width: 0 !important;
+        padding: 7px 10px !important;
+        border: 1px solid #d5e0e2 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: #30434b !important;
+      }
+
+      .app .content[data-page="settings"] .settings-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        padding: 14px 18px 0;
+        border-bottom: 1px solid #e8edef;
+      }
+
+      .app .content[data-page="settings"] .settings-tabs button {
+        min-height: 38px !important;
+        padding: 8px 12px !important;
+        border: 1px solid transparent !important;
+        border-radius: 8px 8px 0 0 !important;
+        background: transparent !important;
+        color: #63747d !important;
+        box-shadow: none !important;
+        font-size: 12px !important;
+        font-weight: 650 !important;
+      }
+
+      .app .content[data-page="settings"] .settings-tabs button.selected {
+        border-color: #dce5e7 !important;
+        border-bottom-color: #fff !important;
+        background: #fff !important;
+        color: #087f70 !important;
+      }
+
+      .app .content[data-page="settings"] .settings-section-heading {
+        padding: 18px 20px 8px;
+      }
+
+      .app .content[data-page="settings"] .settings-section-heading h3 {
+        margin: 0 0 4px;
+        color: #1b2c35;
+        font-size: 14px;
+      }
+
+      .app .content[data-page="settings"] .settings-section-heading p {
+        color: #718087;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .app .content[data-page="settings"] .settings-section .setting-row:last-child {
+        border-bottom: 0 !important;
+      }
+
+      .app .content[data-page="attendance"] .daily-attendance-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-width: 0;
+        padding: 16px 18px;
+        border: 1px solid #dce5e7;
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .app .content[data-page="attendance"] .daily-attendance-heading h2 {
+        margin: 0 0 4px;
+        color: #1b2c35;
+        font-size: 15px;
+      }
+
+      .app .content[data-page="attendance"] .daily-attendance-heading p {
+        color: #63747d;
+        font-size: 12px;
+      }
+
+      .app .content[data-page="attendance"] .daily-attendance-heading > span {
+        flex: 0 0 auto;
+        padding: 6px 10px;
+        border: 1px solid #dce5e7;
+        border-radius: 999px;
+        background: #f4f7f8;
+        color: #63747d;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .app .content[data-page="attendance"] .daily-attendance-heading > span.is-today {
+        border-color: #b9e2d5;
+        background: #eaf7f1;
+        color: #167451;
+      }
+
+      .app.night .content[data-page="settings"] .settings-tabs {
+        border-color: #334951;
+      }
+
+      .app.night .content[data-page="settings"] .settings-tabs button.selected {
+        border-color: #334951 !important;
+        border-bottom-color: #20363f !important;
+        background: #20363f !important;
+        color: #80d5c2 !important;
+      }
+
+      .app.night .content[data-page="settings"] .settings-section-heading h3,
+      .app.night .content[data-page="attendance"] .daily-attendance-heading h2 {
+        color: #e3edef;
+      }
+
+      .app.night .content[data-page="settings"] .settings-section-heading p,
+      .app.night .content[data-page="attendance"] .daily-attendance-heading p {
+        color: #a6b8bc;
+      }
+
+      .app.night .content[data-page="attendance"] .daily-attendance-heading,
+      .app.night .content[data-page="attendance"] .daily-attendance-heading > span {
+        border-color: #334951;
+        background: #20363f;
+        color: #a6b8bc;
+      }
+
+      .app.night .content[data-page="attendance"] .daily-attendance-heading > span.is-today {
+        border-color: #286653;
+        background: #1d433b;
+        color: #9de0c9;
+      }
+
+      .app.night .content[data-page="customers"] .customer-identity strong {
+        color: #e3edef;
+      }
+
+      @media (min-width: 651px) and (max-width: 1100px) {
+        .app:not(.sidebar-collapsed) .sidebar {
+          width: 220px !important;
+          min-width: 220px !important;
+        }
+
+        .app:not(.sidebar-collapsed) .main {
+          width: calc(100% - 220px) !important;
+          margin-left: 220px !important;
+        }
+
+        .app.rtl:not(.sidebar-collapsed) .main {
+          margin-right: 220px !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-stat-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-activity {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-main-grid {
+          grid-template-columns: minmax(0, 1.6fr) minmax(210px, 1fr) !important;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .app .content[data-page="dashboard"] .dashboard-currency-card {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+      }
+
+      @media (max-width: 650px) {
+        .app .sidebar,
+        .app.sidebar-collapsed .sidebar {
+          width: min(320px, 88vw) !important;
+          min-width: 0 !important;
+          padding: 16px !important;
+        }
+
+        .app .sidebar-toggle,
+        .app.sidebar-collapsed .sidebar-toggle {
+          display: none !important;
+        }
+
+        .app .sidebar-mobile-close {
+          display: grid !important;
+          width: 34px !important;
+          height: 34px !important;
+          flex: 0 0 34px !important;
+          place-items: center !important;
+          border: 1px solid rgba(255,255,255,.2) !important;
+          border-radius: 8px !important;
+          background: rgba(255,255,255,.08) !important;
+          color: #f5faf9 !important;
+          font-size: 22px !important;
+        }
+
+        .app .brand,
+        .app.sidebar-collapsed .brand {
+          justify-content: flex-start !important;
+          padding: 4px 0 15px !important;
+        }
+
+        .app .brand-copy,
+        .app.sidebar-collapsed .brand-copy,
+        .app .sidebar-profile-info,
+        .app.sidebar-collapsed .sidebar-profile-info,
+        .app .nav-label,
+        .app.sidebar-collapsed .nav-label,
+        .app .finance-subnav,
+        .app.sidebar-collapsed .finance-subnav,
+        .app .logout-button,
+        .app.sidebar-collapsed .logout-button {
+          display: flex !important;
+        }
+
+        .app .brand-copy {
+          flex-direction: column !important;
+        }
+
+        .app .finance-subnav {
+          flex-direction: column !important;
+        }
+
+        .app .sidebar-profile,
+        .app.sidebar-collapsed .sidebar-profile {
+          justify-content: flex-start !important;
+          padding: 10px !important;
+        }
+
+        .app .nav-button,
+        .app.sidebar-collapsed .nav-button {
+          justify-content: flex-start !important;
+          min-height: 44px !important;
+          padding: 10px 11px !important;
+        }
+
+        .app .nav-button .nav-icon,
+        .app.sidebar-collapsed .nav-button .nav-icon {
+          width: 22px !important;
+          flex: 0 0 22px !important;
+        }
+
+        .app .main,
+        .app.rtl .main,
+        .app.sidebar-collapsed .main,
+        .app.sidebar-collapsed.rtl .main {
+          width: 100% !important;
+          margin: 0 !important;
+        }
+
+        .app .topbar {
+          flex-wrap: wrap !important;
+          height: auto !important;
+          min-height: 0 !important;
+          padding: 9px 12px !important;
+        }
+
+        .app .topbar > div:first-child {
+          width: 100% !important;
+          justify-content: space-between !important;
+        }
+
+        .app .topbar .top-label {
+          display: none !important;
+        }
+
+        .app .header-account-entry {
+          margin-inline-start: auto !important;
+        }
+
+        .app .header-account-name {
+          max-width: min(30vw, 150px) !important;
+        }
+
+        .app .top-actions {
+          width: 100% !important;
+          justify-content: flex-start !important;
+          flex-wrap: wrap !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-stat-grid,
+        .app .content[data-page="dashboard"] .dashboard-financial-summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-attendance-stats {
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-main-grid,
+        .app .content[data-page="dashboard"] .dashboard-activity {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+
+        .app .content[data-page="dashboard"] .currency-controls {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto minmax(0, 1.2fr) !important;
+        }
+
+        .app .page-tools .customer-contract-filter {
+          flex: 1 1 100%;
+        }
+      }
+
+      @media (max-width: 380px) {
+        .app .header-account-label {
+          display: none !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-stat-grid,
+        .app .content[data-page="dashboard"] .dashboard-financial-summary {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+
+        .app .content[data-page="dashboard"] .dashboard-attendance-stats {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+      }
+
+      #root .app .nav-button .nav-label {
+        display: block !important;
+        width: auto !important;
+        min-width: 0 !important;
+        flex: 1 1 auto !important;
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      #root .app .header-account-entry {
+        min-height: 46px !important;
+        border: 1px solid #dce5e7 !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: #1b2c35 !important;
+        box-shadow: none !important;
+      }
+
+      #root .app .header-account-details {
+        display: grid !important;
+        min-width: 0 !important;
+        gap: 2px !important;
+      }
+
+      #root .app .header-account-name,
+      #root .app .header-account-role {
+        display: block !important;
+        max-width: 190px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+
+      #root .app .header-account-role {
+        color: #71838a !important;
+        font-size: 10px !important;
+        font-weight: 550 !important;
+      }
+
+      #root .app .content[data-page] .page-heading-row > .page-title {
+        display: grid !important;
+        align-content: start !important;
+        gap: 5px !important;
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      #root .app .content[data-page] .page-title p {
+        margin: 0 !important;
+        font-size: 12px !important;
+        line-height: 1.55 !important;
+      }
+
+      #root .app.day {
+        color: #1b2c35 !important;
+        background: #f2f5f6 !important;
+      }
+
+      #root .app.day .sidebar {
+        background: #142b39 !important;
+        border-color: #24404d !important;
+        box-shadow: 8px 0 28px rgba(12,31,41,.12) !important;
+      }
+
+      #root .app.day .brand {
+        border-color: rgba(255,255,255,.13) !important;
+        background: transparent !important;
+      }
+
+      #root .app.day .brand-logo,
+      #root .app.day .sidebar-profile-avatar {
+        border: 0 !important;
+        border-radius: 12px !important;
+        background: #087f70 !important;
+        color: #fff !important;
+        box-shadow: none !important;
+      }
+
+      #root .app.day .sidebar-profile {
+        border-color: rgba(255,255,255,.14) !important;
+        border-radius: 12px !important;
+        background: #193644 !important;
+        color: #f3f8f8 !important;
+        box-shadow: none !important;
+      }
+
+      #root .app.day .sidebar-profile-info strong,
+      #root .app.day .brand-copy strong,
+      #root .app.day .brand-copy small {
+        color: #f3f8f8 !important;
+      }
+
+      #root .app.day .sidebar-role-badge {
+        border-color: rgba(255,255,255,.15) !important;
+        background: rgba(255,255,255,.08) !important;
+        color: #b7ccc9 !important;
+      }
+
+      #root .app.day .nav-button {
+        border: 1px solid transparent !important;
+        border-radius: 9px !important;
+        background: transparent !important;
+        color: #c0d0d4 !important;
+        box-shadow: none !important;
+      }
+
+      #root .app.day .nav-button:hover {
+        border-color: rgba(255,255,255,.1) !important;
+        background: rgba(255,255,255,.07) !important;
+        color: #fff !important;
+      }
+
+      #root .app.day .nav-button.active {
+        border-color: rgba(73,193,169,.28) !important;
+        background: rgba(12,139,119,.23) !important;
+        color: #effcf8 !important;
+        box-shadow: inset 3px 0 0 #28ad94 !important;
+      }
+
+      #root .app.day.rtl .nav-button.active {
+        box-shadow: inset -3px 0 0 #28ad94 !important;
+      }
+
+      #root .app.day .topbar {
+        border: 0 !important;
+        border-bottom: 1px solid #dce5e7 !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+        color: #1b2c35 !important;
+        box-shadow: 0 2px 8px rgba(24,48,57,.035) !important;
+      }
+
+      #root .app.day .top-actions > button,
+      #root .app.day .clock,
+      #root .app.day .top-language {
+        border: 1px solid #dce5e7 !important;
+        border-radius: 9px !important;
+        background: #fff !important;
+        color: #40545c !important;
+        box-shadow: none !important;
+      }
+
+      #root .app.day .top-language button.selected {
+        border-radius: 7px !important;
+        background: #e8f4f1 !important;
+        color: #06695d !important;
+      }
+
+      #root .app.day .top-language button {
+        border: 0 !important;
+        border-radius: 7px !important;
+        background: transparent !important;
+        color: #52666d !important;
+      }
+
+      #root .app.day .top-language button.selected {
+        background: #e8f4f1 !important;
+        color: #06695d !important;
+      }
+
+      #root .app.day .theme-button:hover,
+      #root .app.day .refresh-button:hover {
+        border-color: #9bcfc4 !important;
+        background: #f0f8f6 !important;
+        color: #06695d !important;
+      }
+
+      #root .app.day .content[data-page] .page-title h1,
+      #root .app.day .content[data-page] .section-title h2 {
+        color: #1b2c35 !important;
+      }
+
+      #root .app.day .content[data-page] .stat,
+      #root .app.day .content[data-page] .module-summary,
+      #root .app.day .content[data-page] .dashboard-date,
+      #root .app.day .content[data-page] .dashboard-attendance,
+      #root .app.day .content[data-page] .dashboard-panel,
+      #root .app.day .content[data-page] .form-card,
+      #root .app.day .content[data-page] .table-card,
+      #root .app.day .content[data-page] .settings-card,
+      #root .app.day .content[data-page] .finance-card,
+      #root .app.day .content[data-page] .currency-card,
+      #root .app.day .content[data-page] .empty {
+        border-color: #dce5e7 !important;
+        border-radius: 12px !important;
+        background: #fff !important;
+        color: #1b2c35 !important;
+        box-shadow: 0 5px 18px rgba(24,48,57,.055) !important;
+        backdrop-filter: none !important;
+      }
+
+      #root .app.day .content[data-page] .primary-button,
+      #root .app.day .page-tools .new-record-button {
+        border: 1px solid #087f70 !important;
+        border-radius: 8px !important;
+        background: #087f70 !important;
+        color: #fff !important;
+        box-shadow: 0 4px 10px rgba(8,127,112,.12) !important;
+      }
+
+      #root .app.day .content[data-page] .secondary-button,
+      #root .app.day .content[data-page] .tool-button,
+      #root .app.day .content[data-page] .edit-button,
+      #root .app.day .content[data-page] .receipt-button {
+        border: 1px solid #d5e0e2 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        color: #40565e !important;
+        box-shadow: none !important;
+      }
+
+      #root .app.day .content[data-page] .customer-contract-badge {
+        border-color: #c9dff5 !important;
+        background: #eef6fd !important;
+        color: #28669e !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-stat-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+        align-items: stretch !important;
+        gap: 14px !important;
+        margin-bottom: 20px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-stat-grid > .stat {
+        height: 100% !important;
+        min-height: 94px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-finances {
+        margin-bottom: 20px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-finances > .section-title {
+        margin-bottom: 14px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-financial-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        align-items: stretch !important;
+        gap: 16px !important;
+        margin: 0 !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-financial-summary > .stat {
+        height: 100% !important;
+        min-height: 94px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-main-grid {
+        grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr) !important;
+        align-items: start !important;
+        gap: 18px !important;
+        margin-top: 20px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-chart,
+      #root .app .content[data-page="dashboard"] .dashboard-quick-actions {
+        min-width: 0 !important;
+        align-self: start !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-main-grid .section-title,
+      #root .app .content[data-page="dashboard"] .dashboard-activity .section-title {
+        margin-bottom: 14px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-quick-actions .quick-buttons {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+        gap: 9px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-quick-actions .quick-buttons > button {
+        width: 100% !important;
+        min-height: 42px !important;
+        text-align: start !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-activity {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        align-items: start !important;
+        gap: 16px !important;
+        margin-top: 20px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-activity > .dashboard-panel {
+        min-width: 0 !important;
+        height: auto !important;
+        align-self: start !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-activity .recent-row {
+        min-width: 0 !important;
+        align-items: flex-start !important;
+        gap: 10px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-activity .recent-row > div {
+        min-width: 0 !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-activity .recent-row strong,
+      #root .app .content[data-page="dashboard"] .dashboard-activity .recent-row small {
+        overflow-wrap: anywhere !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-currency-card {
+        grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr) !important;
+        gap: 20px !important;
+        margin-top: 20px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-currency-card > div:first-child {
+        min-width: 0 !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .dashboard-currency-card h2 {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: baseline !important;
+        gap: 4px 8px !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-summary-label {
+        display: block !important;
+        flex: 1 1 100% !important;
+        max-width: 100% !important;
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-controls {
+        grid-template-columns: minmax(90px, .55fr) minmax(0, 1.4fr) auto minmax(0, 1.4fr) !important;
+        gap: 10px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-field {
+        display: grid !important;
+        min-width: 0 !important;
+        gap: 5px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-field > span {
+        color: #71838a !important;
+        font-size: 10px !important;
+        font-weight: 650 !important;
+        line-height: 1.2 !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-field input,
+      #root .app .content[data-page="dashboard"] .currency-field select {
+        min-width: 0 !important;
+        width: 100% !important;
+        height: 44px !important;
+        font-size: 13px !important;
+      }
+
+      #root .app .content[data-page="dashboard"] .currency-direction {
+        align-self: end !important;
+        padding-bottom: 13px !important;
+      }
+
+      #root .app .toast {
+        position: fixed !important;
+        top: 12px !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: 50% !important;
+        z-index: 10000 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+        width: min(360px, calc(100vw - 32px)) !important;
+        min-height: 44px !important;
+        padding: 8px 10px 8px 14px !important;
+        transform: translateX(-50%) !important;
+        font-size: 13px !important;
+        line-height: 1.4 !important;
+      }
+
+      #root .app .toast > span {
+        min-width: 0 !important;
+        overflow-wrap: anywhere !important;
+      }
+
+      #root .app .toast-dismiss {
+        display: grid !important;
+        flex: 0 0 28px !important;
+        width: 28px !important;
+        height: 28px !important;
+        place-items: center !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 6px !important;
+        background: transparent !important;
+        color: inherit !important;
+        font-size: 20px !important;
+        line-height: 1 !important;
+        cursor: pointer !important;
+      }
+
+      #root .app .toast-dismiss:hover {
+        background: rgba(8, 127, 112, .1) !important;
+      }
+
+      @media (min-width: 1350px) {
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid.has-users-kpi {
+          grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+        }
+      }
+
+      @media (min-width: 651px) and (max-width: 1349px) {
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid.has-users-kpi {
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+      }
+
+      @media (min-width: 651px) and (max-width: 1100px) {
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid.has-users-kpi {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .dashboard-main-grid {
+          grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .dashboard-activity {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+      }
+
+      @media (max-width: 1100px) {
+        #root .app.has-toast .content[data-page] {
+          padding-top: 64px !important;
+        }
+
+        #root .app .toast {
+          top: 78px !important;
+        }
+      }
+
+      @media (max-width: 650px) {
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid,
+        #root .app .content[data-page="dashboard"] .dashboard-stat-grid.has-users-kpi,
+        #root .app .content[data-page="dashboard"] .dashboard-attendance-stats,
+        #root .app .content[data-page="dashboard"] .dashboard-financial-summary,
+        #root .app .content[data-page="dashboard"] .dashboard-main-grid,
+        #root .app .content[data-page="dashboard"] .dashboard-activity {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+
+        #root .app.has-toast .content[data-page] {
+          padding-top: 64px !important;
+        }
+
+        #root .app .toast {
+          top: 116px !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .dashboard-currency-card {
+          grid-template-columns: minmax(0, 1fr) !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .currency-controls {
+          grid-template-columns: minmax(0, 1fr) !important;
+          gap: 10px !important;
+        }
+
+        #root .app .content[data-page="dashboard"] .currency-direction {
+          justify-self: center !important;
+          align-self: center !important;
+          padding: 0 !important;
+          transform: rotate(90deg) !important;
+        }
+
+        #root .app:not(.sidebar-collapsed) .main,
+        #root .app.sidebar-collapsed .main,
+        #root .app.rtl:not(.sidebar-collapsed) .main,
+        #root .app.sidebar-collapsed.rtl .main {
+          width: 100% !important;
+          margin: 0 !important;
+        }
+
+        #root .app .content[data-page] .page-heading-row > .page-title {
+          width: 100% !important;
+        }
+
+        #root .app .header-account-name {
+          max-width: min(35vw, 150px) !important;
+          white-space: normal !important;
+          line-height: 1.2 !important;
+        }
+
+        #root .app .header-account-entry {
+          flex-shrink: 0 !important;
+          max-width: calc(100vw - 64px) !important;
+          gap: 6px !important;
+          padding: 4px 7px 4px 4px !important;
+        }
+
+        #root .app .header-account-label {
+          display: inline-flex !important;
+        }
+
+        #root .app .header-account-role {
+          white-space: normal !important;
+        }
+      }
             `}</style>
 
       <div
@@ -5156,7 +6333,7 @@ function App() {
           sidebarCollapsed ? "sidebar-collapsed" : ""
         } ${mobileMenuOpen ? "mobile-menu-open" : ""} ${
           isSuperAdminRole(currentUser?.role) ? "role-super-admin" : ""
-        }`}
+        } ${toast ? "has-toast" : ""}`}
       >
 
         {/* SIDEBAR */}
@@ -5177,6 +6354,16 @@ function App() {
                 MANAGEMENT
               </small>
             </div>
+
+            <button
+              type="button"
+              className="sidebar-mobile-close"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label={language === "fa" ? "بستن منو" : "Close navigation"}
+              title={language === "fa" ? "بستن منو" : "Close navigation"}
+            >
+              ×
+            </button>
 
             <button
               type="button"
@@ -5205,45 +6392,22 @@ function App() {
             </button>
           </div>
 
-          <button
-            type="button"
-            className="sidebar-profile account-entry"
-            onClick={() => {
-              setRecordFormOpen(false);
-              setPage("my-account");
-              setOpenMenu("");
-              setMobileMenuOpen(false);
-            }}
-            title={t.account}
-            aria-label={`${t.account}: ${currentUser?.name || currentUser?.username || "User"}`}
-            aria-current={page === "my-account" ? "page" : undefined}
-          >
+          <div className="sidebar-profile" role="group" aria-label={t.account}>
             <div className="sidebar-profile-avatar">
               {(currentUser?.name || currentUser?.username || "U")
                 .trim()
                 .slice(0, 1)
                 .toUpperCase()}
             </div>
-            <span className="account-entry-icon" aria-hidden="true">
-              <ProfileIcon />
-            </span>
             <div className="sidebar-profile-info">
               <strong>
                 {currentUser?.name || currentUser?.username || "User"}
               </strong>
               <span className="sidebar-role-badge">
-                {isSuperAdminRole(currentUser?.role)
-                  ? language === "fa" ? "سوپر ادمین" : "Super Admin"
-                  : isAdminRole(currentUser?.role)
-                    ? language === "fa" ? "مدیر" : "Admin"
-                    : language === "fa" ? "کاربر" : "User"}
-              </span>
-              <span className="account-entry-label">
-                <ProfileIcon />
-                {t.account}
+                {getRoleLabel(currentUser?.role, language)}
               </span>
             </div>
-          </button>
+          </div>
 
           <nav id="primary-navigation" onClick={() => setMobileMenuOpen(false)}>
 
@@ -5793,8 +6957,13 @@ function App() {
                     .slice(0, 1)
                     .toUpperCase()}
                 </span>
-                <span className="header-account-name">
-                  {currentUser?.name || currentUser?.username || "User"}
+                <span className="header-account-details">
+                  <strong className="header-account-name" dir="auto">
+                    {currentUser?.name || currentUser?.username || "User"}
+                  </strong>
+                  <small className="header-account-role" dir="auto">
+                    {getRoleLabel(currentUser?.role, language)}
+                  </small>
                 </span>
                 <span className="header-account-label">{t.account}</span>
                 <ProfileIcon />
@@ -5866,6 +7035,7 @@ function App() {
               attendance={attendance}
               employees={employees}
               instructions={instructions}
+              now={now}
               setPage={setPage}
               startNewRecord={startNewRecord}
             />
@@ -5877,9 +7047,13 @@ function App() {
               customers={customers}
               employees={employees}
               showUserManagementAction={canManageAccountsAs(currentUser)}
+              showUsersCount={isSuperAdminRole(currentUser?.role)}
+              users={users}
               attendance={attendance}
               payments={payments}
               projects={projects}
+              instructions={instructions}
+              financeIncome={financeIncome}
               financeExpenses={financeExpenses}
               income={income}
               expense={expense}
@@ -5909,7 +7083,21 @@ function App() {
               title={t.customers}
               pageKey="customers"
               description={language === "fa" ? "فهرست و اطلاعات مشتریان دفتر." : "Manage customer records and contact details."}
-              toolbar={renderPageTools("customers")}
+              toolbar={renderPageTools(
+                "customers",
+                <label className="customer-contract-filter">
+                  <span>{language === "fa" ? "فیلتر قرارداد" : "Contract"}</span>
+                  <select
+                    value={customerContractFilter}
+                    onChange={(event) => setCustomerContractFilter(event.target.value)}
+                    aria-label={language === "fa" ? "فیلتر مشتریان بر اساس قرارداد" : "Filter customers by contract"}
+                  >
+                    <option value="all">{language === "fa" ? "همه" : "All"}</option>
+                    <option value="linked">{language === "fa" ? "دارای قرارداد" : "Linked"}</option>
+                    <option value="unlinked">{language === "fa" ? "بدون قرارداد" : "Not linked"}</option>
+                  </select>
+                </label>
+              )}
             >
 
               {recordFormOpen && (
@@ -6011,39 +7199,44 @@ function App() {
                   <ModuleOverview
                     items={[
                       { label: t.customers, value: customers.length, tone: "blue" },
-                      { label: language === "fa" ? "نمایش داده‌شده" : "Showing", value: getCustomerRows(customers).length, tone: "teal" },
+                      { label: language === "fa" ? "نمایش داده‌شده" : "Showing", value: getVisibleCustomerRows().length, tone: "teal" },
                       { label: t.contractId, value: customers.filter((customer) => customer.contract_id).length, tone: "purple" },
                       { label: language === "fa" ? "دارای عکس" : "With photo", value: customers.filter((customer) => customer.photo || getStoredPhoto("customer", customer.id)).length, tone: "orange" },
                     ]}
                   />
 
-                  {getCustomerRows(customers).length === 0 ? (
+                  {getVisibleCustomerRows().length === 0 ? (
                     <Empty text={t.noData} />
                   ) : (
                     <Table
                       headers={[
                         language === "fa" ? "شناسه" : "ID",
-                        t.name,
+                        t.customer,
                         t.phone,
                         t.shopName,
-                        t.shopNumber,
-                        t.address,
                         t.contractId,
-                        language === "fa" ? "عکس" : "PHOTO",
+                        t.address,
                         t.action,
                       ]}
                     >
-                      {getCustomerRows(customers).map(
-                        ({ item }) => (
+                      {getVisibleCustomerRows().map(
+                        ({ item, serial }) => (
                           <tr key={item.id}>
-                            <td>{item.id}</td>
-                            <td>{item.name}</td>
+                            <td>{serial}</td>
+                            <td>
+                              <div className="customer-identity">
+                                <AvatarPhoto src={item.photo || getStoredPhoto("customer", item.id)} />
+                                <strong>{item.name}</strong>
+                              </div>
+                            </td>
                             <td>{item.phone}</td>
                             <td>{item.shop_name}</td>
-                            <td>{item.shop_number}</td>
+                            <td>
+                              {item.contract_id
+                                ? <span className="customer-contract-badge">{item.contract_id}</span>
+                                : "—"}
+                            </td>
                             <td>{item.address}</td>
-                            <td>{item.contract_id}</td>
-                            <td><AvatarPhoto src={item.photo || getStoredPhoto("customer", item.id)} /></td>
                             <td>
                               <ActionButtons
                                 edit={() => editCustomer(item)}
@@ -7928,9 +9121,34 @@ function App() {
 
                 </div>
 
-                {Object.entries(
-                  DEFAULT_SETTINGS
-                ).map(([key]) => {
+                <div className="settings-tabs" role="tablist" aria-label={language === "fa" ? "بخش‌های تنظیمات" : "Settings sections"}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={settingsTab === "general"}
+                    className={settingsTab === "general" ? "selected" : ""}
+                    onClick={() => setSettingsTab("general")}
+                  >
+                    {language === "fa" ? "عمومی" : "General"}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={settingsTab === "appearance"}
+                    className={settingsTab === "appearance" ? "selected" : ""}
+                    onClick={() => setSettingsTab("appearance")}
+                  >
+                    {language === "fa" ? "زبان و نمایش" : "Language & appearance"}
+                  </button>
+                </div>
+
+                {settingsTab === "general" && (
+                  <section className="settings-section" role="tabpanel">
+                    <div className="settings-section-heading">
+                      <h3>{language === "fa" ? "ویژگی‌های سیستم" : "System features"}</h3>
+                      <p>{language === "fa" ? "ویژگی‌های فعال دفتر را مدیریت کنید." : "Manage which office features are available."}</p>
+                    </div>
+                    {Object.entries(DEFAULT_SETTINGS).map(([key]) => {
 
                   const labels = {
                     notifications:
@@ -8002,76 +9220,66 @@ function App() {
 
                     </div>
                   );
-                })}
+                    })}
+                  </section>
+                )}
 
-                {/* LANGUAGE */}
-
-                <div className="setting-row">
-
-                  <div>
-                    <strong>
-                      {t.language}
-                    </strong>
-
-                    <small>
-                      SYSTEM LANGUAGE
-                    </small>
-                  </div>
-
-                  <div className="language-choice">
-
-                    <button
-                      className={
-                        language === "en"
-                          ? "selected"
-                          : ""
-                      }
-                      onClick={() =>
-                        setLanguage("en")
-                      }
-                    >
-                      ENGLISH
-                    </button>
-
-                    <button
-                      className={
-                        language === "fa"
-                          ? "selected"
-                          : ""
-                      }
-                      onClick={() =>
-                        setLanguage("fa")
-                      }
-                    >
-                      فارسی
-                    </button>
-
-                  </div>
-
-                </div>
-
-                {/* THEME */}
-                <div className="setting-row">
-                  <div>
-                    <strong>{t.theme}</strong>
-                    <small>LIGHT / DARK INTERFACE</small>
-                  </div>
-
-                  <div className="theme-choice">
-                    <button
-                      className={theme === "day" ? "selected" : ""}
-                      onClick={() => setTheme("day")}
-                    >
-                      ☀ {t.dayMode}
-                    </button>
-                    <button
-                      className={theme === "night" ? "selected" : ""}
-                      onClick={() => setTheme("night")}
-                    >
-                      ☾ {t.nightMode}
-                    </button>
-                  </div>
-                </div>
+                {settingsTab === "appearance" && (
+                  <section className="settings-section settings-appearance" role="tabpanel">
+                    <div className="settings-section-heading">
+                      <h3>{language === "fa" ? "زبان و نمایش" : "Language & appearance"}</h3>
+                      <p>{language === "fa" ? "زبان و حالت نمایش مورد علاقه را انتخاب کنید." : "Choose the preferred language and display mode."}</p>
+                    </div>
+                    <div className="setting-row">
+                      <div>
+                        <strong>{t.language}</strong>
+                        <small>{language === "fa" ? "زبان سیستم" : "System language"}</small>
+                      </div>
+                      <div className="language-choice">
+                        <button
+                          type="button"
+                          className={language === "en" ? "selected" : ""}
+                          aria-pressed={language === "en"}
+                          onClick={() => setLanguage("en")}
+                        >
+                          ENGLISH
+                        </button>
+                        <button
+                          type="button"
+                          className={language === "fa" ? "selected" : ""}
+                          aria-pressed={language === "fa"}
+                          onClick={() => setLanguage("fa")}
+                        >
+                          فارسی
+                        </button>
+                      </div>
+                    </div>
+                    <div className="setting-row">
+                      <div>
+                        <strong>{t.theme}</strong>
+                        <small>{language === "fa" ? "حالت روشن یا تاریک" : "Light or dark interface"}</small>
+                      </div>
+                      <div className="theme-choice">
+                        <button
+                          type="button"
+                          className={theme === "day" ? "selected" : ""}
+                          aria-pressed={theme === "day"}
+                          onClick={() => setTheme("day")}
+                        >
+                          ☀ {t.dayMode}
+                        </button>
+                        <button
+                          type="button"
+                          className={theme === "night" ? "selected" : ""}
+                          aria-pressed={theme === "night"}
+                          onClick={() => setTheme("night")}
+                        >
+                          ☾ {t.nightMode}
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                )}
 
               </div>
 
@@ -8085,8 +9293,16 @@ function App() {
         {/* TOAST */}
 
         {toast && (
-          <div className="toast">
-            {toast}
+          <div className="toast" role="status" aria-live="polite">
+            <span>{toast}</span>
+            <button
+              type="button"
+              className="toast-dismiss"
+              onClick={() => setToast("")}
+              aria-label={language === "fa" ? "بستن پیام" : "Dismiss notification"}
+            >
+              ×
+            </button>
           </div>
         )}
 
@@ -8120,9 +9336,13 @@ function Dashboard({
   customers,
   employees,
   showUserManagementAction,
+  showUsersCount,
+  users,
   attendance,
   payments,
   projects,
+  instructions,
+  financeIncome,
   financeExpenses,
   income,
   expense,
@@ -8145,21 +9365,62 @@ function Dashboard({
         project.status !== "Cancelled"
     );
 
-  const expenseChartData =
-    [...financeExpenses]
-      .sort(
-        (a, b) =>
-          Number(b.amount || 0) -
-          Number(a.amount || 0)
-      )
-      .slice(0, 6);
-
-  const maxChartExpense = Math.max(
-    ...expenseChartData.map((item) =>
-      Number(item.amount || 0)
-    ),
-    1
+  const todayDate = getTodayKabulInputDate();
+  const todayAttendance = attendance.filter(
+    (item) => String(item.date || "").slice(0, 10) === todayDate
   );
+  const financialChartData = [
+    ...financeIncome.map((item) => ({
+      id: `income-${item.id}`,
+      label: item.source || t.income,
+      amount: Number(item.amount || 0),
+      date: item.date,
+      kind: "income",
+      kindLabel: t.income,
+    })),
+    ...financeExpenses.map((item) => ({
+      id: `expense-${item.id}`,
+      label: item.title || t.expense,
+      amount: Number(item.amount || 0),
+      date: item.date,
+      kind: "expense",
+      kindLabel: t.expense,
+    })),
+  ]
+    .filter((item) => Number.isFinite(item.amount))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+    .slice(0, 8);
+  const maxChartAmount = Math.max(
+    ...financialChartData.map((item) => item.amount),
+    0
+  );
+
+  const recentActivities = [
+    ...instructions.map((item) => ({
+      id: `instruction-${item.id}`,
+      title: item.title,
+      detail: t.instructions,
+      date: item.created_at,
+      kind: "instruction",
+    })),
+    ...projects.map((item) => ({
+      id: `project-${item.id}`,
+      title: item.title,
+      detail: t.projects,
+      date: item.created_at,
+      kind: "project",
+    })),
+    ...payments.map((item) => ({
+      id: `payment-${item.id}`,
+      title: item.description || formatMoney(item.amount),
+      detail: t.payments,
+      date: item.created_at || item.date,
+      kind: "payment",
+    })),
+  ]
+    .filter((item) => item.title && item.date)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .slice(0, 5);
 
   const overdueProjects =
     projects.filter((project) => {
@@ -8197,7 +9458,7 @@ function Dashboard({
           {settings.dashboardStats && (
             <span className="dashboard-attendance">
               <span aria-hidden="true" />
-              {attendance.length} {t.attendance}
+              {todayAttendance.length} {t.attendanceToday}
             </span>
           )}
           {settings.dateTime && (
@@ -8211,7 +9472,7 @@ function Dashboard({
       </div>
 
       {settings.dashboardStats && (
-        <div className="stats-grid dashboard-stat-grid">
+        <div className={`stats-grid dashboard-stat-grid ${showUsersCount ? "has-users-kpi" : ""}`}>
           <Stat
             number={customers.length}
             label={t.customers}
@@ -8232,7 +9493,37 @@ function Dashboard({
             label={t.payments}
             code="PY"
           />
+          {showUsersCount && (
+            <Stat
+              number={users.length}
+              label={t.users}
+              code="US"
+            />
+          )}
         </div>
+      )}
+
+      {settings.dashboardStats && (
+        <section className="dashboard-attendance-summary" aria-label={t.attendanceToday}>
+          <SectionTitle title={t.attendanceToday} />
+          <div className="stats-grid dashboard-attendance-stats">
+            <Stat
+              number={todayAttendance.filter((item) => String(item.status).toLowerCase() === "present").length}
+              label={t.present}
+              code="PR"
+            />
+            <Stat
+              number={todayAttendance.filter((item) => String(item.status).toLowerCase() === "absent").length}
+              label={t.absent}
+              code="AB"
+            />
+            <Stat
+              number={todayAttendance.filter((item) => String(item.status).toLowerCase() === "late").length}
+              label={t.late}
+              code="LT"
+            />
+          </div>
+        </section>
       )}
 
       <section className="dashboard-finances" aria-label={t.finance}>
@@ -8270,18 +9561,27 @@ function Dashboard({
             </h2>
           </div>
           <div className="currency-controls">
-            <input type="number" value={currencyAmount} onChange={(e) => setCurrencyAmount(e.target.value)} />
-            <select value={currencyFrom} onChange={(e) => setCurrencyFrom(e.target.value)}>
-              {Object.keys(RATES).map((currency) => (
-                <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
-              ))}
-            </select>
-            <span aria-hidden="true">→</span>
-            <select value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)}>
-              {Object.keys(RATES).map((currency) => (
-                <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
-              ))}
-            </select>
+            <label className="currency-field">
+              <span>{t.amount}</span>
+              <input type="number" value={currencyAmount} onChange={(e) => setCurrencyAmount(e.target.value)} />
+            </label>
+            <label className="currency-field">
+              <span>{t.from}</span>
+              <select aria-label={t.from} value={currencyFrom} onChange={(e) => setCurrencyFrom(e.target.value)}>
+                {Object.keys(RATES).map((currency) => (
+                  <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
+                ))}
+              </select>
+            </label>
+            <span className="currency-direction" aria-hidden="true">→</span>
+            <label className="currency-field">
+              <span>{t.to}</span>
+              <select aria-label={t.to} value={currencyTo} onChange={(e) => setCurrencyTo(e.target.value)}>
+                {Object.keys(RATES).map((currency) => (
+                  <option key={currency} value={currency}>{currencyLabel(currency, language)}</option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
       )}
@@ -8301,23 +9601,28 @@ function Dashboard({
 
       <div className="dashboard-main-grid">
         <section className="dashboard-panel expense-chart-panel dashboard-chart">
-          <SectionTitle title={language === "fa" ? "نمودار مصارف" : "EXPENSES CHART"} />
-          {expenseChartData.length === 0 ? (
+          <SectionTitle title={language === "fa" ? "نمودار مالی" : "FINANCIAL ACTIVITY"} />
+          {financialChartData.length === 0 ? (
             <Empty text={t.noData} />
           ) : (
             <div className="expense-chart-list">
-              {expenseChartData.map((item) => {
-                const amount = Number(item.amount || 0);
-                const width = Math.max(6, (amount / maxChartExpense) * 100);
+              {financialChartData.map((item) => {
+                const width = maxChartAmount > 0
+                  ? Math.max(4, (item.amount / maxChartAmount) * 100)
+                  : 0;
                 return (
-                  <div className="expense-chart-row" key={item.id}>
+                  <div className={`expense-chart-row chart-${item.kind}`} key={item.id}>
                     <div className="expense-chart-head">
-                      <strong>{item.title || (language === "fa" ? "مصرف" : "Expense")}</strong>
-                      <span>{formatMoney(amount)}</span>
+                      <strong>{item.label}</strong>
+                      <span className="financial-chart-value">
+                        <small>{item.kindLabel}</small>
+                        {formatMoney(item.amount)}
+                      </span>
                     </div>
                     <div className="expense-chart-track">
                       <div className="expense-chart-bar" style={{ width: `${width}%` }} />
                     </div>
+                    <time>{formatDisplayDate(item.date, language)}</time>
                   </div>
                 );
               })}
@@ -8339,7 +9644,7 @@ function Dashboard({
       </div>
 
       <div className="dashboard-activity">
-        <div className="dashboard-panel">
+        <section className="dashboard-panel">
           <SectionTitle title={t.recentProjects} />
           {activeProjects.slice(0, 5).map((project) => (
             <div className="recent-row" key={project.id}>
@@ -8351,8 +9656,8 @@ function Dashboard({
             </div>
           ))}
           {activeProjects.length === 0 && <Empty text={t.noData} />}
-        </div>
-        <div className="dashboard-panel">
+        </section>
+        <section className="dashboard-panel">
           <SectionTitle title={t.recentPayments} />
           {payments.slice(0, 5).map((payment) => (
             <div className="recent-row" key={payment.id}>
@@ -8364,7 +9669,20 @@ function Dashboard({
             </div>
           ))}
           {payments.length === 0 && <Empty text={t.noData} />}
-        </div>
+        </section>
+        <section className="dashboard-panel dashboard-office-activities">
+          <SectionTitle title={language === "fa" ? "فعالیت‌های اخیر دفتر" : "RECENT OFFICE ACTIVITIES"} />
+          {recentActivities.map((activity) => (
+            <div className="recent-row" key={activity.id}>
+              <div>
+                <strong>{activity.title}</strong>
+                <small>{activity.detail}</small>
+              </div>
+              <time>{formatDisplayDate(activity.date, language)}</time>
+            </div>
+          ))}
+          {recentActivities.length === 0 && <Empty text={t.noData} />}
+        </section>
       </div>
 
     </section>
@@ -8385,6 +9703,7 @@ function PageTools({
   onPrint,
   onExcel,
   showExcel,
+  filters,
 }) {
   return (
     <div className="page-tools" data-page-tools={page}>
@@ -8398,6 +9717,8 @@ function PageTools({
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+
+      {filters}
 
       <div className="page-tool-actions">
         <button
@@ -8465,13 +9786,30 @@ function AdminDashboard({
   attendance,
   employees,
   instructions,
+  now,
   setPage,
   startNewRecord,
 }) {
   const recentInstructions = instructions.slice(0, 4);
+  const todayRecords = attendance.filter(
+    (item) => String(item.date || "").slice(0, 10) === getTodayKabulInputDate()
+  );
+  const dashboardMeta = (
+    <div className="dashboard-header-meta">
+      <span className="dashboard-attendance">
+        <span aria-hidden="true" />
+        {todayRecords.length} {t.attendanceToday}
+      </span>
+      <div className="dashboard-date">
+        <span>{language === "fa" ? "امروز" : "Today"}</span>
+        <strong>{formatDate(now, language)}</strong>
+        <time>{formatTime(now)}</time>
+      </div>
+    </div>
+  );
 
   return (
-    <Page title={t.dashboard} pageKey="dashboard">
+    <Page title={t.dashboard} pageKey="dashboard" toolbar={dashboardMeta}>
       <p className="dashboard-intro">
         {language === "fa"
           ? "نمای کلی حاضری و دستورهای دفتر."
@@ -8480,7 +9818,7 @@ function AdminDashboard({
 
       <div className="stats-grid admin-stats">
         <Stat
-          number={attendance.length}
+          number={todayRecords.length}
           label={t.attendance}
           code="AT"
         />
@@ -8495,6 +9833,15 @@ function AdminDashboard({
           code="OR"
         />
       </div>
+
+      <section className="dashboard-attendance-summary" aria-label={t.attendanceToday}>
+        <SectionTitle title={t.attendanceToday} />
+        <div className="stats-grid dashboard-attendance-stats">
+          <Stat number={todayRecords.filter((item) => String(item.status).toLowerCase() === "present").length} label={t.present} code="PR" />
+          <Stat number={todayRecords.filter((item) => String(item.status).toLowerCase() === "absent").length} label={t.absent} code="AB" />
+          <Stat number={todayRecords.filter((item) => String(item.status).toLowerCase() === "late").length} label={t.late} code="LT" />
+        </div>
+      </section>
 
       <section className="dashboard-panel admin-dashboard-panel">
         <SectionTitle title={t.instructions} />
@@ -8541,6 +9888,57 @@ function NavButton({
   active,
   onClick,
 }) {
+  const iconShapes = {
+    "⌂": (
+      <>
+        <path d="m3 10 9-7 9 7" />
+        <path d="M5 9v11h14V9M9 20v-6h6v6" />
+      </>
+    ),
+    "◉": (
+      <>
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.5a3 3 0 0 1 0 5.8M18 14a5 5 0 0 1 3 4.5v1" />
+      </>
+    ),
+    "♙": (
+      <>
+        <circle cx="12" cy="7" r="3.5" />
+        <path d="M5 21v-1a7 7 0 0 1 14 0v1" />
+      </>
+    ),
+    "▤": (
+      <>
+        <path d="M5 3h10l4 4v14H5z" />
+        <path d="M14 3v5h5M8 12h8M8 16h8" />
+      </>
+    ),
+    "✓": (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="m8 12 2.5 2.5L16 9" />
+      </>
+    ),
+    "₣": (
+      <>
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M3 10h18M7 15h4M16 14v2" />
+      </>
+    ),
+    "▣": (
+      <>
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M8 4v16M8 9h13M8 14h13" />
+      </>
+    ),
+    "⚙": (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.8 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.8-1l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.8-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.8 1l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z" />
+      </>
+    ),
+  };
+
   return (
     <button
       className={
@@ -8552,7 +9950,9 @@ function NavButton({
       title={label}
     >
       <span className="nav-icon">
-        {icon}
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          {iconShapes[icon] || <circle cx="12" cy="12" r="8" />}
+        </svg>
       </span>
 
       <span className="nav-label">
